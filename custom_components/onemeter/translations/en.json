@@ -1,0 +1,16 @@
+{
+  "sensor": {
+    "energy_kwh": "Energy",
+    "power_kw": "Power",
+    "last_update": "Last Update"
+  },
+  "config": {
+    "mqtt_broker": "MQTT Broker",
+    "mqtt_port": "MQTT Port",
+    "mqtt_user": "MQTT User",
+    "mqtt_pass": "MQTT Password",
+    "max_power_kw": "Max Power kW",
+    "window_seconds": "Power Window Seconds"
+  },
+  "device": {"name": "OneMeter OM9613","manufacturer": "OneMeter","model": "OM9613"}
+}

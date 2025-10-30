@@ -1,0 +1,13 @@
+{
+  "domain": "onemeter",
+  "name": "OneMeter OM9613",
+  "version": "1.0.0",
+  "documentation": "https://github.com/arekh5/onemeter-hacs",
+  "requirements": [
+    "paho-mqtt>=2.1.0"
+  ],
+  "dependencies": [],
+  "codeowners": ["@arekh5"],
+  "config_flow": true,
+  "iot_class": "local_polling"
+}

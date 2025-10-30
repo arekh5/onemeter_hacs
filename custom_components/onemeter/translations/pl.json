@@ -1,0 +1,16 @@
+{
+  "sensor": {
+    "energy_kwh": "Energia",
+    "power_kw": "Moc",
+    "last_update": "Ostatnia aktualizacja"
+  },
+  "config": {
+    "mqtt_broker": "Broker MQTT",
+    "mqtt_port": "Port MQTT",
+    "mqtt_user": "Użytkownik MQTT",
+    "mqtt_pass": "Hasło MQTT",
+    "max_power_kw": "Maksymalna moc kW",
+    "window_seconds": "Okno mocy chwilowej (s)"
+  },
+  "device": {"name": "OneMeter OM9613","manufacturer": "OneMeter","model": "OM9613"}
+}
