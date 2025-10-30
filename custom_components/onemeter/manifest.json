@@ -1,7 +1,7 @@
 {
   "domain": "onemeter",
   "name": "OneMeter",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "requirements": [
     "paho-mqtt>=1.6.1"
   ],

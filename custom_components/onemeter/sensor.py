@@ -17,7 +17,7 @@ class OneMeterSensorAsync:
         self.last_timestamp = None
         self.device_id = "om9613"
         self.client = None
-        self.heartbeat_interval = self.mqtt_config.get("heartbeat_interval", 30)  # sekundy
+        self.heartbeat_interval = self.mqtt_config.get("heartbeat_interval", 30)
 
     async def start(self):
         """Uruchamia klienta MQTT i loop asyncio"""
@@ -31,7 +31,6 @@ class OneMeterSensorAsync:
         self.client.on_message = self.on_message
 
         _LOGGER.info(f"Łączenie z brokerem MQTT {self.mqtt_config['mqtt_broker']}...")
-        # Połączenie MQTT w osobnym wątku
         await loop.run_in_executor(None, self.client.connect,
                                    self.mqtt_config["mqtt_broker"],
                                    self.mqtt_config["mqtt_port"],
@@ -54,13 +53,8 @@ class OneMeterSensorAsync:
             _LOGGER.error(f"Błąd połączenia z MQTT, kod {rc}")
             return
 
-        # Subskrypcja na temat przychodzących impulsów
         client.subscribe("onemeter/s10/v1")
-
-        # Publikacja discovery do Home Assistant
         self.publish_discovery()
-
-        # Publikacja stanu początkowego
         self.publish_state(initial=True)
 
     def publish_discovery(self):
@@ -115,12 +109,11 @@ class OneMeterSensorAsync:
         ]
 
         for sensor in sensors:
-            topic = f"homeassistant/sensor/{sensor['unique_id']}/config"
+            topic = f"homeassistant/sensor/OneMeter/{sensor['unique_id']}/config"
             self.client.publish(topic, json.dumps(sensor), qos=1, retain=True)
             _LOGGER.info(f"Opublikowano MQTT discovery dla {sensor['name']}")
 
     def publish_state(self, initial=False):
-        """Publikuje stan sensora do MQTT"""
         now = datetime.now()
         timestamp_str = now.strftime("%Y-%m-%d %H:%M:%S")
 
@@ -147,7 +140,6 @@ class OneMeterSensorAsync:
         _LOGGER.info(f"Opublikowano stan energy: {mqtt_payload}")
 
     def on_message(self, client, userdata, msg):
-        """Obsługuje przychodzące wiadomości MQTT z impulsami"""
         try:
             payload = json.loads(msg.payload.decode("utf-8"))
             dev_list = payload.get("dev_list", [])
@@ -161,9 +153,13 @@ class OneMeterSensorAsync:
                 return
             self.last_timestamp = ts
 
-            # Licz impuls
             self.total_impulses += 1
-
-            # Okno czasowe do obliczania mocy
             now = time.time()
-            self.impulse_window_
+            self.impulse_window.append(now)
+            window_seconds = self.mqtt_config.get("window_seconds", 60)
+            while self.impulse_window and (now - self.impulse_window[0]) > window_seconds:
+                self.impulse_window.popleft()
+
+            self.publish_state()
+        except Exception as e:
+            _LOGGER.error(f"Błąd przetwarzania wiadomości: {e}")

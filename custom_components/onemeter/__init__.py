@@ -1,4 +1,3 @@
-import asyncio
 import logging
 from .sensor import OneMeterSensorAsync  # import klasy sensora
 
@@ -8,13 +7,12 @@ async def async_setup_entry(hass, entry):
     """Konfiguracja po dodaniu entry w HA"""
     _LOGGER.info("Uruchamianie OneMeter Sensor")
     
-    # Tworzymy instancję sensora
     sensor = OneMeterSensorAsync(hass, entry)
     
-    # Uruchamiamy klienta MQTT asynchronicznie
+    # Uruchom klienta MQTT asynchronicznie
     await sensor.start()
     
-    # Można zachować referencję w hass.data jeśli potrzebne później
+    # Zachowaj referencję w hass.data
     hass.data.setdefault("onemeter", {})[entry.entry_id] = sensor
     
     return True
