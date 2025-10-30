@@ -1,12 +1,18 @@
 {
   "domain": "onemeter",
   "name": "OneMeter",
-  "version": "1.0.0",
-  "documentation": "https://github.com/arekh5/onemeter_hacs",
+  "version": "1.0.3",
   "requirements": [
     "paho-mqtt>=1.6.1"
   ],
   "dependencies": [],
   "codeowners": ["@arekh5"],
-  "config_flow": true
+  "config_entries": [
+    {
+      "domain": "onemeter",
+      "type": "mqtt"
+    }
+  ],
+  "config_flow": true,
+  "documentation": "https://github.com/arekh5/onemeter_hacs"
 }

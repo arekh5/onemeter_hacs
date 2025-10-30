@@ -3,12 +3,12 @@ import time
 import logging
 from datetime import datetime
 from collections import deque
+import asyncio
 import paho.mqtt.client as mqtt
 
 _LOGGER = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO)
 
-class OneMeterSensor:
+class OneMeterSensorAsync:
     def __init__(self, hass, entry):
         self.hass = hass
         self.mqtt_config = entry.data
@@ -17,9 +17,11 @@ class OneMeterSensor:
         self.last_timestamp = None
         self.device_id = "om9613"
         self.client = None
+        self.heartbeat_interval = self.mqtt_config.get("heartbeat_interval", 30)  # sekundy
 
-    def start(self):
-        """Uruchamia połączenie z MQTT i publikację discovery"""
+    async def start(self):
+        """Uruchamia klienta MQTT i loop asyncio"""
+        loop = asyncio.get_running_loop()
         self.client = mqtt.Client()
         self.client.username_pw_set(
             self.mqtt_config["mqtt_user"],
@@ -28,13 +30,22 @@ class OneMeterSensor:
         self.client.on_connect = self.on_connect
         self.client.on_message = self.on_message
 
-        _LOGGER.info(f"Łączenie z MQTT brokerem {self.mqtt_config['mqtt_broker']}...")
-        self.client.connect(
-            self.mqtt_config["mqtt_broker"],
-            self.mqtt_config["mqtt_port"],
-            60
-        )
+        _LOGGER.info(f"Łączenie z brokerem MQTT {self.mqtt_config['mqtt_broker']}...")
+        # Połączenie MQTT w osobnym wątku
+        await loop.run_in_executor(None, self.client.connect,
+                                   self.mqtt_config["mqtt_broker"],
+                                   self.mqtt_config["mqtt_port"],
+                                   60)
         self.client.loop_start()
+
+        # Pętla heartbeat
+        asyncio.create_task(self._heartbeat_loop())
+
+    async def _heartbeat_loop(self):
+        """Publikacja heartbeat co X sekund"""
+        while True:
+            self.client.publish(f"onemeter/energy/{self.device_id}/status", "online", qos=1, retain=True)
+            await asyncio.sleep(self.heartbeat_interval)
 
     def on_connect(self, client, userdata, flags, rc):
         if rc == 0:
@@ -46,14 +57,10 @@ class OneMeterSensor:
         # Subskrypcja na temat przychodzących impulsów
         client.subscribe("onemeter/s10/v1")
 
-        # Status online
-        status_topic = f"onemeter/energy/{self.device_id}/status"
-        client.publish(status_topic, "online", qos=1, retain=True)
-
-        # Publikacja discovery Home Assistant
+        # Publikacja discovery do Home Assistant
         self.publish_discovery()
 
-        # Publikacja stanu początkowego (wszystko 0)
+        # Publikacja stanu początkowego
         self.publish_state(initial=True)
 
     def publish_discovery(self):
@@ -117,7 +124,6 @@ class OneMeterSensor:
         now = datetime.now()
         timestamp_str = now.strftime("%Y-%m-%d %H:%M:%S")
 
-        # Jeżeli brak impulsów, wysyłamy 0
         if initial:
             kwh = 0.0
             power_kw = 0.0
@@ -160,13 +166,4 @@ class OneMeterSensor:
 
             # Okno czasowe do obliczania mocy
             now = time.time()
-            self.impulse_window.append(now)
-            window_seconds = self.mqtt_config.get("window_seconds", 60)
-            while self.impulse_window and (now - self.impulse_window[0]) > window_seconds:
-                self.impulse_window.popleft()
-
-            # Publikacja stanu
-            self.publish_state()
-
-        except Exception as e:
-            _LOGGER.error(f"Błąd przetwarzania wiadomości: {e}")
+            self.impulse_window_
