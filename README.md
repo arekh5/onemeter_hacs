@@ -11,7 +11,6 @@ Poniżej przykładowy widok integracji OneMeter w Home Assistant:
 
 ![OneMeter screenshot](https://raw.githubusercontent.com/arekh5/onemeter-hacs/main/docs/screenshot.png)
 
-> 🔸 Jeśli obraz się nie wyświetla, dodaj własny zrzut ekranu w repozytorium w katalogu `docs/screenshot.png`.
 
 ---
 
