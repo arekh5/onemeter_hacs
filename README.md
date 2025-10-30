@@ -9,7 +9,7 @@ Została przygotowana z myślą o łatwej instalacji przez **HACS** (Home Assist
 
 Poniżej przykładowy widok integracji OneMeter w Home Assistant:  
 
-![OneMeter screenshot](https://github.com/arekh5/onemeter_hacs/docs/screenshot.png)
+![OneMeter screenshot](docs/screenshot.png)
 
 
 ---
