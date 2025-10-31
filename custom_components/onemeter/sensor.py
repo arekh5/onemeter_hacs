@@ -12,44 +12,63 @@ class OneMeterSensor:
         self.hass = hass
         self.mqtt_config = entry.data
 
-        # --- Konfiguracja podstawowa ---
+        # --- Podstawowe ---
         self.device_id = "om9613"
         self.total_impulses = 0
         self.impulse_window = deque()
         self.last_timestamp = None
         self.last_message_time = 0
 
-        # --- Konfiguracja mocy chwilowej ---
+        # --- Parametry mocy chwilowej ---
         self.window_seconds = self.mqtt_config.get("window_seconds", 60)
         self.impulses_per_kwh = self.mqtt_config.get("impulses_per_kwh", 1000)
         self.max_power_kw = self.mqtt_config.get("max_power_kw", 20.0)
         self.power_update_interval = self.mqtt_config.get("power_update_interval", 15)
 
-        # --- Uśrednianie ruchome (opcjonalne wygładzanie mocy) ---
+        # --- Bufor do wygładzenia mocy chwilowej ---
         self.power_history = deque(maxlen=self.mqtt_config.get("power_average_window", 5))
         self.last_power_publish = 0
+        self.client = None
 
-    async def async_start(self):
-        """Uruchom połączenie z MQTT"""
-        logging.basicConfig(level=logging.INFO)
+    def start(self):
+        """Uruchom MQTT w tle (blokująco w executorze HA)"""
         self.client = mqtt.Client()
         self.client.username_pw_set(
             self.mqtt_config["mqtt_user"],
             self.mqtt_config["mqtt_pass"]
         )
+
         self.client.on_connect = self.on_connect
         self.client.on_message = self.on_message
-        self.client.connect(
-            self.mqtt_config["mqtt_broker"],
-            self.mqtt_config["mqtt_port"],
-            60
+        self.client.will_set(
+            f"onemeter/energy/{self.device_id}/status",
+            "offline",
+            qos=1,
+            retain=True
         )
-        self.client.loop_start()
+
+        try:
+            self.client.connect(
+                self.mqtt_config["mqtt_broker"],
+                self.mqtt_config["mqtt_port"],
+                60
+            )
+            self.client.loop_start()
+            _LOGGER.info("🚀 OneMeter MQTT client started")
+        except Exception as e:
+            _LOGGER.error(f"❌ Błąd połączenia MQTT: {e}")
+
+    def stop(self):
+        """Zatrzymaj MQTT"""
+        if self.client:
+            self.client.loop_stop()
+            self.client.disconnect()
+            _LOGGER.info("🛑 OneMeter MQTT client stopped")
 
     def on_connect(self, client, userdata, flags, rc):
-        """Po połączeniu z MQTT brokerem"""
+        """Połączenie z MQTT"""
         if rc == 0:
-            _LOGGER.info(f"✅ Połączono z MQTT brokerem {self.mqtt_config['mqtt_broker']}")
+            _LOGGER.info(f"✅ Połączono z brokerem {self.mqtt_config['mqtt_broker']}")
             client.subscribe("onemeter/s10/v1", qos=1)
             client.publish(f"onemeter/energy/{self.device_id}/status", "online", qos=1, retain=True)
             self.publish_discovery()
@@ -57,7 +76,7 @@ class OneMeterSensor:
             _LOGGER.error(f"❌ Błąd połączenia MQTT (kod {rc})")
 
     def publish_discovery(self):
-        """Publikuje konfigurację MQTT discovery dla Home Assistant"""
+        """Publikacja MQTT discovery dla Home Assistant"""
         base_topic = "homeassistant/sensor/onemeter"
         device_info = {
             "identifiers": [f"onemeter_{self.device_id}"],
@@ -103,7 +122,7 @@ class OneMeterSensor:
             _LOGGER.info(f"📡 Zarejestrowano sensor HA: {sensor['name']}")
 
     def on_message(self, client, userdata, msg):
-        """Obsługuje wiadomości MQTT z impulsami"""
+        """Obsługa wiadomości MQTT z impulsami"""
         try:
             payload = json.loads(msg.payload.decode("utf-8"))
             dev_list = payload.get("dev_list", [])
@@ -115,35 +134,35 @@ class OneMeterSensor:
 
             now = time.time()
             if ts == self.last_timestamp and (now - self.last_message_time) < 1:
-                # powtarzające się wiadomości w krótkim czasie – pomijamy
+                # ignoruj duplikaty
                 return
+
             self.last_timestamp = ts
             self.last_message_time = now
 
-            # --- Zlicz impuls ---
+            # --- Licz impuls ---
             self.total_impulses += 1
             self.impulse_window.append(now)
 
-            # usuń stare impulsy z okna
+            # usuń impulsy starsze niż window_seconds
             while self.impulse_window and (now - self.impulse_window[0]) > self.window_seconds:
                 self.impulse_window.popleft()
 
-            # --- Oblicz chwilową moc ---
+            # --- Moc chwilowa ---
             impulses_in_window = len(self.impulse_window)
             power_kw = (impulses_in_window / self.impulses_per_kwh) * (3600 / self.window_seconds)
-
             if self.max_power_kw and power_kw > self.max_power_kw:
                 power_kw = self.max_power_kw
 
-            # --- Uśrednianie mocy ---
+            # --- Bufor wygładzający ---
             self.power_history.append(power_kw)
             avg_power_kw = sum(self.power_history) / len(self.power_history)
 
-            # --- Oblicz energię (kWh) ---
+            # --- Energia całkowita ---
             kwh = self.total_impulses / self.impulses_per_kwh
             timestamp_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-            # --- Publikacja co określony interwał ---
+            # --- Publikacja co power_update_interval ---
             if now - self.last_power_publish >= self.power_update_interval:
                 self.last_power_publish = now
                 mqtt_payload = {
@@ -153,7 +172,7 @@ class OneMeterSensor:
                     "power_kw": round(avg_power_kw, 3)
                 }
                 client.publish(f"onemeter/energy/{self.device_id}/state", json.dumps(mqtt_payload), qos=1, retain=True)
-                _LOGGER.info(f"📈 Energy: {mqtt_payload}")
+                _LOGGER.info(f"📈 Energy update: {mqtt_payload}")
 
         except Exception as e:
             _LOGGER.error(f"❌ Błąd przetwarzania wiadomości: {e}")
