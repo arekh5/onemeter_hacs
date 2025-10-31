@@ -44,17 +44,18 @@ class OneMeterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 class OneMeterOptionsFlow(config_entries.OptionsFlow):
-    """Opcje konfiguracji (edycja po dodaniu integracji)."""
+    """Obsługa opcji integracji OneMeter."""
 
-    def __init__(self, config_entry):
-        self.config_entry = config_entry
+    def __init__(self, config_entry):s
+        super().__init__()
+        self._config_entry = config_entry
 
     async def async_step_init(self, user_input=None):
         """Edycja istniejącej konfiguracji."""
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
 
-        current = self.config_entry.data
+        current = self._config_entry.data
 
         schema = vol.Schema({
             vol.Required("mqtt_broker", default=current.get("mqtt_broker", "127.0.0.1")): str,
