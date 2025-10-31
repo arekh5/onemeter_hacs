@@ -3,25 +3,35 @@ import time
 import logging
 from datetime import datetime
 from collections import deque
-import asyncio
 import paho.mqtt.client as mqtt
 
 _LOGGER = logging.getLogger(__name__)
 
-class OneMeterSensorAsync:
+class OneMeterSensor:
     def __init__(self, hass, entry):
         self.hass = hass
         self.mqtt_config = entry.data
+
+        # --- Konfiguracja podstawowa ---
+        self.device_id = "om9613"
         self.total_impulses = 0
         self.impulse_window = deque()
         self.last_timestamp = None
-        self.device_id = "om9613"
-        self.client = None
-        self.heartbeat_interval = self.mqtt_config.get("heartbeat_interval", 30)
+        self.last_message_time = 0
 
-    async def start(self):
-        """Uruchamia klienta MQTT i loop asyncio"""
-        loop = asyncio.get_running_loop()
+        # --- Konfiguracja mocy chwilowej ---
+        self.window_seconds = self.mqtt_config.get("window_seconds", 60)
+        self.impulses_per_kwh = self.mqtt_config.get("impulses_per_kwh", 1000)
+        self.max_power_kw = self.mqtt_config.get("max_power_kw", 20.0)
+        self.power_update_interval = self.mqtt_config.get("power_update_interval", 15)
+
+        # --- Uśrednianie ruchome (opcjonalne wygładzanie mocy) ---
+        self.power_history = deque(maxlen=self.mqtt_config.get("power_average_window", 5))
+        self.last_power_publish = 0
+
+    async def async_start(self):
+        """Uruchom połączenie z MQTT"""
+        logging.basicConfig(level=logging.INFO)
         self.client = mqtt.Client()
         self.client.username_pw_set(
             self.mqtt_config["mqtt_user"],
@@ -29,44 +39,32 @@ class OneMeterSensorAsync:
         )
         self.client.on_connect = self.on_connect
         self.client.on_message = self.on_message
-
-        _LOGGER.info(f"Łączenie z brokerem MQTT {self.mqtt_config['mqtt_broker']}...")
-        await loop.run_in_executor(None, self.client.connect,
-                                   self.mqtt_config["mqtt_broker"],
-                                   self.mqtt_config["mqtt_port"],
-                                   60)
+        self.client.connect(
+            self.mqtt_config["mqtt_broker"],
+            self.mqtt_config["mqtt_port"],
+            60
+        )
         self.client.loop_start()
 
-        # Pętla heartbeat
-        asyncio.create_task(self._heartbeat_loop())
-
-    async def _heartbeat_loop(self):
-        """Publikacja heartbeat co X sekund"""
-        while True:
-            self.client.publish(f"onemeter/energy/{self.device_id}/status", "online", qos=1, retain=True)
-            await asyncio.sleep(self.heartbeat_interval)
-
     def on_connect(self, client, userdata, flags, rc):
+        """Po połączeniu z MQTT brokerem"""
         if rc == 0:
-            _LOGGER.info(f"Połączono z brokerem MQTT {self.mqtt_config['mqtt_broker']}")
+            _LOGGER.info(f"✅ Połączono z MQTT brokerem {self.mqtt_config['mqtt_broker']}")
+            client.subscribe("onemeter/s10/v1", qos=1)
+            client.publish(f"onemeter/energy/{self.device_id}/status", "online", qos=1, retain=True)
+            self.publish_discovery()
         else:
-            _LOGGER.error(f"Błąd połączenia z MQTT, kod {rc}")
-            return
-
-        client.subscribe("onemeter/s10/v1")
-        self.publish_discovery()
-        self.publish_state(initial=True)
+            _LOGGER.error(f"❌ Błąd połączenia MQTT (kod {rc})")
 
     def publish_discovery(self):
         """Publikuje konfigurację MQTT discovery dla Home Assistant"""
+        base_topic = "homeassistant/sensor/onemeter"
         device_info = {
             "identifiers": [f"onemeter_{self.device_id}"],
             "name": "OneMeter",
             "manufacturer": "OneMeter",
-            "model": "OneMeter Energy Monitor"
+            "model": "OM9613 Energy Monitor"
         }
-
-        availability_topic = f"onemeter/energy/{self.device_id}/status"
 
         sensors = [
             {
@@ -78,9 +76,6 @@ class OneMeterSensorAsync:
                 "value_template": "{{ value_json.kwh }}",
                 "state_class": "total_increasing",
                 "device": device_info,
-                "availability_topic": availability_topic,
-                "payload_available": "online",
-                "payload_not_available": "offline"
             },
             {
                 "name": "OneMeter Power",
@@ -91,55 +86,24 @@ class OneMeterSensorAsync:
                 "value_template": "{{ value_json.power_kw }}",
                 "state_class": "measurement",
                 "device": device_info,
-                "availability_topic": availability_topic,
-                "payload_available": "online",
-                "payload_not_available": "offline"
             },
             {
                 "name": "OneMeter Timestamp",
                 "unique_id": f"{self.device_id}_timestamp",
                 "state_topic": f"onemeter/energy/{self.device_id}/state",
-                "value_template": "{{ value_json.timestamp }}",
                 "icon": "mdi:clock-outline",
+                "value_template": "{{ value_json.timestamp }}",
                 "device": device_info,
-                "availability_topic": availability_topic,
-                "payload_available": "online",
-                "payload_not_available": "offline"
             }
         ]
 
         for sensor in sensors:
-            topic = f"homeassistant/sensor/OneMeter/{sensor['unique_id']}/config"
+            topic = f"{base_topic}/{sensor['unique_id']}/config"
             self.client.publish(topic, json.dumps(sensor), qos=1, retain=True)
-            _LOGGER.info(f"Opublikowano MQTT discovery dla {sensor['name']}")
-
-    def publish_state(self, initial=False):
-        now = datetime.now()
-        timestamp_str = now.strftime("%Y-%m-%d %H:%M:%S")
-
-        if initial:
-            kwh = 0.0
-            power_kw = 0.0
-        else:
-            window_seconds = self.mqtt_config.get("window_seconds", 60)
-            impulses_in_window = len(self.impulse_window)
-            power_kw = (impulses_in_window / 1000) * (3600 / window_seconds)
-            max_power = self.mqtt_config.get("max_power_kw", 20.0)
-            if max_power and power_kw > max_power:
-                power_kw = max_power
-            kwh = self.total_impulses / 1000
-
-        mqtt_payload = {
-            "timestamp": timestamp_str,
-            "impulses": self.total_impulses,
-            "kwh": round(kwh, 3),
-            "power_kw": round(power_kw, 2)
-        }
-
-        self.client.publish(f"onemeter/energy/{self.device_id}/state", json.dumps(mqtt_payload), qos=1, retain=True)
-        _LOGGER.info(f"Opublikowano stan energy: {mqtt_payload}")
+            _LOGGER.info(f"📡 Zarejestrowano sensor HA: {sensor['name']}")
 
     def on_message(self, client, userdata, msg):
+        """Obsługuje wiadomości MQTT z impulsami"""
         try:
             payload = json.loads(msg.payload.decode("utf-8"))
             dev_list = payload.get("dev_list", [])
@@ -149,17 +113,47 @@ class OneMeterSensorAsync:
             device = dev_list[0]
             ts = device.get("ts")
 
-            if ts == self.last_timestamp:
+            now = time.time()
+            if ts == self.last_timestamp and (now - self.last_message_time) < 1:
+                # powtarzające się wiadomości w krótkim czasie – pomijamy
                 return
             self.last_timestamp = ts
+            self.last_message_time = now
 
+            # --- Zlicz impuls ---
             self.total_impulses += 1
-            now = time.time()
             self.impulse_window.append(now)
-            window_seconds = self.mqtt_config.get("window_seconds", 60)
-            while self.impulse_window and (now - self.impulse_window[0]) > window_seconds:
+
+            # usuń stare impulsy z okna
+            while self.impulse_window and (now - self.impulse_window[0]) > self.window_seconds:
                 self.impulse_window.popleft()
 
-            self.publish_state()
+            # --- Oblicz chwilową moc ---
+            impulses_in_window = len(self.impulse_window)
+            power_kw = (impulses_in_window / self.impulses_per_kwh) * (3600 / self.window_seconds)
+
+            if self.max_power_kw and power_kw > self.max_power_kw:
+                power_kw = self.max_power_kw
+
+            # --- Uśrednianie mocy ---
+            self.power_history.append(power_kw)
+            avg_power_kw = sum(self.power_history) / len(self.power_history)
+
+            # --- Oblicz energię (kWh) ---
+            kwh = self.total_impulses / self.impulses_per_kwh
+            timestamp_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+            # --- Publikacja co określony interwał ---
+            if now - self.last_power_publish >= self.power_update_interval:
+                self.last_power_publish = now
+                mqtt_payload = {
+                    "timestamp": timestamp_str,
+                    "impulses": self.total_impulses,
+                    "kwh": round(kwh, 3),
+                    "power_kw": round(avg_power_kw, 3)
+                }
+                client.publish(f"onemeter/energy/{self.device_id}/state", json.dumps(mqtt_payload), qos=1, retain=True)
+                _LOGGER.info(f"📈 Energy: {mqtt_payload}")
+
         except Exception as e:
-            _LOGGER.error(f"Błąd przetwarzania wiadomości: {e}")
+            _LOGGER.error(f"❌ Błąd przetwarzania wiadomości: {e}")
