@@ -38,7 +38,7 @@ class OneMeterCoordinator(DataUpdateCoordinator):
         self.device_id = "om9613"
         # MAC urządzenia OneMeter, używany do filtrowania w payloadzie GL-S10
         self.target_mac = "E58D81019613" 
-        # Temat z surowymi impulsami, na który subskrybujemy
+        # Temat z surowymi impulsami, na który subskrybujemy (Format GL-S10)
         self.base_topic = "onemeter/s10/v1" 
         
         # --- Stan MQTT ---
@@ -50,6 +50,7 @@ class OneMeterCoordinator(DataUpdateCoordinator):
         self.last_valid_power = 0.0
         
         # --- Parametry ---
+        # Używamy parameters z entry/options
         self.impulses_per_kwh = config.get("impulses_per_kwh", 1000)
         self.max_power_kw = config.get("max_power_kw", 20.0)
         self.power_timeout_seconds = config.get("power_timeout_seconds", 300)
@@ -80,11 +81,9 @@ class OneMeterCoordinator(DataUpdateCoordinator):
         self.total_impulses = int(restored_kwh * self.impulses_per_kwh)
         _LOGGER.info(f"✅ Koordynator: Odzyskano stan energii: {restored_kwh} kWh (co odpowiada {self.total_impulses} impulsom).")
         
-        # Ustawienie stanu, aby encje były dostępne natychmiast po starcie
         self.data = {
             "power_kw": 0.0,
             "kwh": restored_kwh,
-            # Ustawienie czasu ostatniego impulsu, aby moc chwilowa była 0.0
             "last_impulse_time": time.time() - self.power_timeout_seconds - 1, 
             "last_impulse_kw": 0.0,
         }
@@ -94,7 +93,7 @@ class OneMeterCoordinator(DataUpdateCoordinator):
     async def _async_message_received(self, msg):
         """Asynchroniczna obsługa wiadomości MQTT."""
         
-        # KRYTYCZNA WERYFIKACJA: Jeśli to się nie pojawi, subskrypcja nie działa!
+        # WERYFIKACJA ODBIORU (Kluczowy log!)
         _LOGGER.error(f"🚨 CALLBACK OTRZYMANY. Temat: {msg.topic}, Długość Payload: {len(msg.payload)} bytes")
         
         try:
@@ -166,6 +165,7 @@ class OneMeterCoordinator(DataUpdateCoordinator):
             
             state_topic = f"onemeter/energy/{self.device_id}/state"
             try:
+                # Wymagamy, aby globalny klient HA MQTT działał
                 await mqtt.async_publish(
                     self.hass, 
                     state_topic, 
@@ -189,7 +189,7 @@ class OneMeterCoordinator(DataUpdateCoordinator):
         _LOGGER.error("🚨 ETAP 1/3: Rozpoczynanie procesu subskrypcji MQTT dla Koordynatora.")
         
         try:
-            # Czekanie na gotowość klienta MQTT
+            # Czekanie na gotowość klienta MQTT (musi być skonfigurowany)
             await mqtt.async_when_ready(self.hass)
             _LOGGER.error("🚨 ETAP 2/3: Klient MQTT Home Assistanta jest GOTOWY do subskrypcji.")
 
@@ -250,7 +250,7 @@ class OneMeterCoordinator(DataUpdateCoordinator):
 # ----------------------------------------------------------------------
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities):
-    """Tworzenie encji sensorów z obsługą odzyskiwania stanu Koordynatora (v2.0.22)."""
+    """Tworzenie encji sensorów z obsługą odzyskiwania stanu Koordynatora."""
     
     coordinator = OneMeterCoordinator(hass, entry)
 
