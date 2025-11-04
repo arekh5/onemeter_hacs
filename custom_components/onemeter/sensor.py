@@ -206,7 +206,7 @@ class OneMeterCoordinator(DataUpdateCoordinator):
             kwh = self.total_impulses / self.impulses_per_kwh
             avg_power_kw = sum(self.power_history) / len(self.power_history)
             
-            # 💡 LOGIKA RESETU/SYNCHRONIZACJI MIESIĘCZNEJ (KONIECZNA PRZY KAŻDYM IMPULSIE)
+            # 💡 LOGIKA RESETU/SYNCHRONIZACJI MIESIĘCZNEJ
             now_dt = datetime.fromtimestamp(now) 
             current_month = now_dt.month
             
@@ -379,7 +379,7 @@ class OneMeterBaseSensor(SensorEntity):
             name="OneMeter",
             manufacturer="OneMeter",
             model="Energy Meter",
-            sw_version="2.0.53", # ✅ Nowy numer wersji
+            sw_version="2.0.54", # ✅ NOWY NUMER WERSJI
         )
 
     @property
@@ -396,7 +396,7 @@ class OneMeterBaseSensor(SensorEntity):
              await super().async_added_to_hass()
 
 class OneMeterEnergySensor(OneMeterBaseSensor, RestoreEntity):
-    """Sensor energii (kWh), który odzyskuje stan (persistence). Aktualizuje się przy każdym impulsie."""
+    """Sensor energii (kWh), który odzyskuje stan (persistence)."""
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
     _attr_device_class = SensorDeviceClass.ENERGY
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
@@ -411,53 +411,61 @@ class OneMeterEnergySensor(OneMeterBaseSensor, RestoreEntity):
         return None
 
 class OneMeterPowerSensor(OneMeterBaseSensor):
-    """Sensor mocy chwilowej (kW). Aktualizuje się maksymalnie co 5 sekund."""
+    """Sensor mocy chwilowej (kW). Teraz poprawnie ogranicza zapis do bazy danych, a nie stan."""
     _attr_native_unit_of_measurement = UnitOfPower.KILO_WATT
     _attr_device_class = SensorDeviceClass.POWER
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_translation_key = "power_kw"
     
-    # ✅ NOWA LOGIKA THROTTLINGU
+    # ✅ NOWA LOGIKA THROTTLINGU (przeniesiona do async_write_ha_state)
     def __init__(self, coordinator: OneMeterCoordinator):
         super().__init__(coordinator)
-        self._last_reported_time = 0.0
-        # Maksymalna częstotliwość raportowania stanu do bazy to co 5 sekund
+        # Przechowujemy czas ostatniego ZAPISU stanu do bazy HA
+        self._last_write_time = 0.0
+        # Maksymalna częstotliwość zapisywania stanu do bazy to co 5 sekund
         self._throttle_interval = 5.0 
 
     @property
     def native_value(self) -> StateType:
-        """Zwraca obecną wartość mocy w kW, ograniczając częstotliwość zapisu."""
+        """Zawsze zwraca obecną, uśrednioną wartość mocy (bez throttling'u)."""
         
         if self.coordinator.data is None:
             return None
 
         time_since_impulse = time.time() - self.coordinator.data.get("last_impulse_time", 0)
         
-        # 1. Obliczamy bieżącą, uśrednioną moc
         current_power = self.coordinator.data.get("power_kw", 0.0)
         
         # Logika Timeoutu (ustawienie na 0.0, jeśli minął czas)
         if time_since_impulse > self.coordinator.power_timeout_seconds:
              current_power = 0.0
         
-        current_power = round(current_power, 3)
+        # Zawsze zwracamy aktualną wartość (bez 'None'), aby na dashboardzie było widać poprawną moc.
+        return round(current_power, 3)
+
+    async def async_write_ha_state(self) -> None:
+        """Nadpisuje metodę zapisu, aby ograniczyć częstotliwość do bazy danych."""
         now = time.time()
         
-        # 2. LOGIKA OGRANICZANIA CZĘSTOTLIWOŚCI
+        # 1. Sprawdzamy, czy upłynął minimalny czas od ostatniego zapisu
+        if now - self._last_write_time >= self._throttle_interval:
+            self._last_write_time = now
+            # Wywołujemy oryginalną metodę zapisu (zapis do historii i aktualizacja stanu)
+            await super().async_write_ha_state()
+            return
         
-        # A) Jeżeli moc jest 0.0, zawsze raportujemy natychmiast (ważne do oznaczania 'sleep mode' lub 'wyłączone')
-        if current_power == 0.0:
-            self._last_reported_time = now
-            return current_power
+        # 2. Logika natychmiastowego zapisu dla 0.0 kW (jeśli jest istotna zmiana)
+        # Zapisujemy natychmiast, jeśli moc jest 0.0 (np. wyłączono licznik / timeout)
+        current_power = self.native_value
+        if current_power is not None and current_power == 0.0:
+            self._last_write_time = now
+            await super().async_write_ha_state()
+            return
 
-        # B) Jeżeli moc > 0.0, sprawdzamy, czy minął minimalny czas
-        if now - self._last_reported_time < self._throttle_interval:
-            # Nie minął minimalny czas -> Zwracamy None, aby Home Assistant POMIJAŁ zapis tego stanu
-            return None 
+        # 3. W przeciwnym razie: Ograniczamy zapis (pass)
+        # Wartość będzie widoczna na dashboardzie, ale nie zostanie zapisana do historii HA/bazy danych.
+        pass
 
-        # 3. Zapisujemy czas i zwracamy nową wartość (jeśli dotarliśmy tu, to minął minimalny czas)
-        self._last_reported_time = now
-        return current_power
 
 class OneMeterForecastSensor(OneMeterBaseSensor, RestoreEntity):
     """Sensor prognozy miesięcznego zużycia (kWh), aktualizowany co interwał."""
