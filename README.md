@@ -67,7 +67,7 @@ Jeśli nie używasz HACS, możesz dodać integrację ręcznie:
 custom_components/onemeter/
  ├─ init.py
  ├─ manifest.json
- ├─ config_flow.py 
+ ├─ config_flow.py
  ├─ sensor.py
  ├─ translations/
  │ ├─ en.json

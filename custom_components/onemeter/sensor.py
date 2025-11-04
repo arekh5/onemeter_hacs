@@ -22,14 +22,14 @@ class OneMeterSensor:
         # --- Parametry mocy chwilowej (k, timeout, max) ---
         self.impulses_per_kwh = self.mqtt_config.get("impulses_per_kwh", 1000)
         self.max_power_kw = self.mqtt_config.get("max_power_kw", 20.0)
-        self.power_update_interval = self.mqtt_config.get("power_update_interval", 15)
+        self.power_update_interval = self.mqtt_config.get("power_update_interval", 5) # ZMIENIONE Z 15 NA 5
 
         # --- Logika ostatniej znanej mocy / zerowania ---
         self.last_valid_power = 0.0
         self.power_timeout_seconds = self.mqtt_config.get("power_timeout_seconds", 300) 
 
         # --- Bufor do wygładzenia mocy chwilowej ---
-        self.power_history = deque(maxlen=self.mqtt_config.get("power_average_window", 5))
+        self.power_history = deque(maxlen=self.mqtt_config.get("power_average_window", 2)) # ZMIENIONE Z 5 NA 2
         self.last_power_publish = 0
         self.client = None
         
@@ -125,7 +125,7 @@ class OneMeterSensor:
             _LOGGER.info(f"📡 Zarejestrowano sensor HA: {sensor['name']}")
 
     def on_message(self, client, userdata, msg):
-        """Obsługa wiadomości MQTT z impulsami (Finalna wersja)"""
+        """Obsługa wiadomości MQTT z impulsami (Finalna wersja z Delta t)"""
         try:
             payload = json.loads(msg.payload.decode("utf-8"))
             dev_list = payload.get("dev_list", [])
@@ -151,7 +151,7 @@ class OneMeterSensor:
                 
                 if time_diff_t > 0:
                     power_kw = 3600 / (self.impulses_per_kwh * time_diff_t)
-                    self.last_valid_power = power_kw # Zapisujemy nową, ważną moc
+                    self.last_valid_power = power_kw
                 else: 
                     power_kw = self.max_power_kw
                     self.last_valid_power = power_kw
@@ -169,10 +169,9 @@ class OneMeterSensor:
                 # Jeśli ostatni impuls był dawno temu (wg timeoutu), moc jest 0.0
                 if self.last_impulse_times and (now - self.last_impulse_times[-1] > self.power_timeout_seconds):
                     power_to_publish = 0.0
-                    self.power_history.clear() # Opcjonalnie: czyścimy bufor, gdy moc spada do zera
+                    self.power_history.clear() 
                 else:
-                    # Jeśli impulsy są aktywne (lub właśnie się pojawiły), 
-                    # do bufora dodajemy ostatnią obliczoną moc i ją uśredniamy.
+                    # Uśredniamy ostatnią ważną moc
                     self.power_history.append(self.last_valid_power)
                     power_to_publish = sum(self.power_history) / len(self.power_history)
                 
