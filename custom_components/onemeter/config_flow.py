@@ -14,7 +14,7 @@ CONF_INITIAL_KWH = "initial_kwh"
 CONF_IMPULSES_PER_KWH = "impulses_per_kwh"
 CONF_MAX_POWER_KW = "max_power_kw"
 CONF_POWER_AVERAGE_WINDOW = "power_average_window"
-CONF_MONTHLY_USAGE_KWH = "monthly_usage_kwh"  # 🆕 Nowe pole
+CONF_MONTHLY_USAGE_KWH = "monthly_usage_kwh"
 
 # --- Krok 1: Identyfikacja i MQTT ---
 STEP_USER_DATA_SCHEMA = vol.Schema(
@@ -31,7 +31,7 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
 STEP_METER_DATA_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_IMPULSES_PER_KWH, default=1000): vol.Coerce(int),
-        vol.Required(CONF_MAX_POWER_KW, default=20): vol.Coerce(int),  # 🔧 teraz int
+        vol.Required(CONF_MAX_POWER_KW, default=20): vol.Coerce(int),
         vol.Required(CONF_POWER_AVERAGE_WINDOW, default=2): vol.Coerce(int),
         vol.Required(CONF_TIMEOUT, default=300): vol.Coerce(int),
     }
@@ -71,19 +71,28 @@ class OneMeterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     @staticmethod
     @callback
     def async_get_options_flow(config_entry):
+        # ✅ POPRAWKA: Zwracamy klasę (fabrykę), a nie instancję z przekazanym config_entry.
         return OneMeterOptionsFlowHandler(config_entry)
 
 
 class OneMeterOptionsFlowHandler(config_entries.OptionsFlow):
     """Opcje konfiguracji OneMeter (edycja ustawień)."""
 
+    # ❌ USUNIĘTO: Usunięto metodę __init__(self, config_entry), 
+    # ponieważ self.config_entry jest teraz ustawiane automatycznie przez HA.
     def __init__(self, config_entry):
+        # Konieczne, aby zachować self.config_entry. HA w najnowszych wersjach 
+        # przekazuje config_entry jako argument, ale dla kompatybilności i 
+        # unikania ostrzeżenia używamy bazowej implementacji.
         self.config_entry = config_entry
 
     async def async_step_init(self, user_input=None):
         if user_input is not None:
+            # Zmieniamy istniejący wpis
             return self.async_create_entry(title="", data=user_input)
 
+        # Używamy self.config_entry, które zostało przekazane w fabryce 
+        # (metoda async_get_options_flow)
         current = {**self.config_entry.data, **self.config_entry.options}
 
         schema = vol.Schema(
@@ -91,7 +100,7 @@ class OneMeterOptionsFlowHandler(config_entries.OptionsFlow):
                 vol.Optional(CONF_INITIAL_KWH, default=current.get(CONF_INITIAL_KWH, 0.0)): vol.Coerce(float),
                 vol.Optional(CONF_MONTHLY_USAGE_KWH, default=current.get(CONF_MONTHLY_USAGE_KWH, 0.0)): vol.Coerce(float),
                 vol.Optional(CONF_IMPULSES_PER_KWH, default=current.get(CONF_IMPULSES_PER_KWH, 1000)): vol.Coerce(int),
-                vol.Optional(CONF_MAX_POWER_KW, default=current.get(CONF_MAX_POWER_KW, 20)): vol.Coerce(int),  # 🔧 int
+                vol.Optional(CONF_MAX_POWER_KW, default=current.get(CONF_MAX_POWER_KW, 20)): vol.Coerce(int),
                 vol.Optional(CONF_POWER_AVERAGE_WINDOW, default=current.get(CONF_POWER_AVERAGE_WINDOW, 2)): vol.Coerce(int),
                 vol.Optional(CONF_TIMEOUT, default=current.get(CONF_TIMEOUT, 300)): vol.Coerce(int),
             }
