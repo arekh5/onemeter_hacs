@@ -104,7 +104,9 @@ class OneMeterCoordinator(DataUpdateCoordinator):
             _LOGGER.error(f"❌ Błąd przetwarzania wiadomości MQTT: {e}")
 
     async def async_added_to_hass(self) -> None:
-        """Subskrypcja MQTT po starcie integracji."""
+        """Subskrypcja MQTT i ustawienie statusu urządzenia."""
+        
+        # 1. SUBSKRYPCJA GŁÓWNEGO TEMATU
         self.unsubscribe_mqtt = await mqtt.async_subscribe(
             self.hass,
             self.base_topic,
@@ -112,10 +114,32 @@ class OneMeterCoordinator(DataUpdateCoordinator):
             qos=1,
             encoding="utf-8"
         )
+        
+        # 2. PUBLIKACJA STATUSU (POPRAWKA: Dodano brakującą publikację statusu)
+        status_topic = f"onemeter/energy/{self.device_id}/status"
+        await mqtt.async_publish(
+            self.hass, 
+            status_topic, 
+            "online", 
+            qos=1, 
+            retain=True
+        )
+        _LOGGER.info(f"✅ Opublikowano status 'online' na temacie: {status_topic}")
+        
         await super().async_added_to_hass()
         
     async def async_will_remove_from_hass(self) -> None:
-        """Usunięcie subskrypcji MQTT."""
+        """Usunięcie subskrypcji MQTT i publikacja statusu 'offline'."""
+        
+        # Publikacja statusu 'offline' przed usunięciem
+        await mqtt.async_publish(
+            self.hass, 
+            f"onemeter/energy/{self.device_id}/status", 
+            "offline", 
+            qos=1, 
+            retain=True
+        )
+        
         if self.unsubscribe_mqtt:
             self.unsubscribe_mqtt()
         await super().async_will_remove_from_hass()
@@ -129,7 +153,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     """Tworzenie encji sensorów."""
     
     coordinator = OneMeterCoordinator(hass, entry)
-    # POPRAWKA BŁĘDU NotImplementedError: usunięto linijkę wymuszającą odświeżanie.
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
 
@@ -198,7 +221,6 @@ class OneMeterPowerSensor(OneMeterBaseSensor):
     _attr_name = "Power"
     _attr_device_class = SensorDeviceClass.POWER
     _attr_state_class = SensorStateClass.MEASUREMENT
-    # POPRAWKA BŁĘDU KILO_WATTS: Użyto prawidłowej stałej KILO_WATT
     _attr_unit_of_measurement = UnitOfPower.KILO_WATT 
     
     def __init__(self, coordinator: OneMeterCoordinator):
@@ -224,8 +246,6 @@ class OneMeterForecastSensor(OneMeterBaseSensor):
 
     _attr_has_entity_name = True
     _attr_name = "Monthly Forecast"
-    # POPRAWKA WALIDACJI HA: Usunięto SensorDeviceClass.ENERGY, 
-    # ponieważ konfliktował z SensorStateClass.MEASUREMENT.
     _attr_device_class = None
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
