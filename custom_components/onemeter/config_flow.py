@@ -2,11 +2,16 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.core import callback
-from homeassistant.const import CONF_MAC, CONF_DEVICE_ID, CONF_TOPIC, CONF_TIMEOUT
+# from homeassistant.const import CONF_MAC, CONF_DEVICE_ID, CONF_TOPIC, CONF_TIMEOUT # ❌ USUNIĘTO - Powód Błędu
 
 DOMAIN = "onemeter"
 
-# Własne stałe konfiguracyjne
+# Własne stałe konfiguracyjne (i stałe z homeassistant.const, które są niedostępne)
+CONF_DEVICE_ID = "device_id" # ✅ Dodano lokalnie
+CONF_MAC = "mac"             # ✅ Dodano lokalnie
+CONF_TOPIC = "topic"         # ✅ Dodano lokalnie
+CONF_TIMEOUT = "timeout"     # ✅ Dodano lokalnie
+
 CONF_INITIAL_KWH = "initial_kwh" 
 CONF_IMPULSES_PER_KWH = "impulses_per_kwh"
 CONF_MAX_POWER_KW = "max_power_kw"

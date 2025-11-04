@@ -23,13 +23,13 @@ _LOGGER = logging.getLogger(__name__)
 
 DOMAIN = "onemeter"
 
-# Stałe używane w Koordynatorze (dopasowane do config_flow.py)
+# Stałe Konfiguracyjne (lokalna definicja dla spójności i unikania błędów importu)
 CONF_DEVICE_ID = "device_id"
 CONF_MAC = "mac"
 CONF_TOPIC = "topic"
 CONF_IMPULSES_PER_KWH = "impulses_per_kwh"
 CONF_MAX_POWER_KW = "max_power_kw"
-CONF_TIMEOUT = "power_timeout_seconds"
+CONF_TIMEOUT = "power_timeout_seconds" # Zachowujemy klucz konfiguracyjny
 CONF_POWER_AVERAGE_WINDOW = "power_average_window"
 CONF_INITIAL_KWH = "initial_kwh" 
 
@@ -207,8 +207,8 @@ class OneMeterCoordinator(DataUpdateCoordinator):
                     self.hass, 
                     state_topic, 
                     json.dumps(mqtt_payload), 
-                    qos=1,             # 💡 Zmienione na QoS 1
-                    retain=True        # ✅ POPRAWKA: Zmienione na RETAIN TRUE
+                    qos=1,             
+                    retain=True        
                 )
             except Exception as publish_e:
                  _LOGGER.error(f"❌ BŁĄD PUBLIKACJI: Nie udało się opublikować przetworzonego stanu na MQTT: {publish_e}")
@@ -330,7 +330,7 @@ class OneMeterBaseSensor(SensorEntity):
             name="OneMeter",
             manufacturer="OneMeter",
             model="Energy Meter",
-            sw_version="2.0.46", # Zaktualizowany numer wersji
+            sw_version="2.0.47", # Zaktualizowany numer wersji
         )
 
     @property
