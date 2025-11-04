@@ -33,7 +33,7 @@ class OneMeterCoordinator(DataUpdateCoordinator):
         self.hass = hass
         self.entry = entry
         self.mqtt_config = entry.data
-        self.device_id = "om9613" # Stały ID urządzenia
+        self.device_id = "om9613"
         self.base_topic = "onemeter/s10/v1"
         
         # --- Stan MQTT ---
@@ -224,7 +224,9 @@ class OneMeterForecastSensor(OneMeterBaseSensor):
 
     _attr_has_entity_name = True
     _attr_name = "Monthly Forecast"
-    _attr_device_class = SensorDeviceClass.ENERGY
+    # POPRAWKA WALIDACJI HA: Usunięto SensorDeviceClass.ENERGY, 
+    # ponieważ konfliktował z SensorStateClass.MEASUREMENT.
+    _attr_device_class = None
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
     _attr_icon = "mdi:chart-line"
@@ -281,7 +283,6 @@ class OneMeterForecastSensor(OneMeterBaseSensor):
             days_in_month = monthrange(now_dt.year, current_month)[1]
             forecast_kwh = (current_month_kwh / elapsed_days) * days_in_month
         
-        # Zapisanie stanu prognozy w atrybutach, aby Home Assistant mógł go odzyskać
         self._attr_extra_state_attributes = {
             "kwh_at_month_start": round(self.coordinator.kwh_at_month_start, 3),
             "last_month_checked": self.coordinator.last_month_checked,
