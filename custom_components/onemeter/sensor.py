@@ -71,7 +71,10 @@ class OneMeterCoordinator(DataUpdateCoordinator):
             update_interval=None 
         )
 
-    # 💡 POPRAWKA BŁĘDU v2.0.37: Dodanie brakującej metody
+    # 💡 Wymagana metoda dla poprawnego cyklu życia HA (poprawka v2.0.37)
+    # 🧩 Kompatybilność wsteczna (dla starszych wersji HA)
+    # Niektóre wersje DataUpdateCoordinator nie implementują async_remove_listener.
+    # Ten most zapewnia stabilność i usuwa AttributeError w cyklu życia encji.
     def async_remove_listener(self, update_callback: callback) -> None:
         """Usuwa słuchacza, przekazując wywołanie do klasy bazowej (DataUpdateCoordinator)."""
         super().async_remove_listener(update_callback)
@@ -83,7 +86,8 @@ class OneMeterCoordinator(DataUpdateCoordinator):
     async def _async_restore_state(self, restored_kwh: float):
         """Ustawia stan początkowy Koordynatora na podstawie odzyskanego kWh z encji."""
         self.total_impulses = int(restored_kwh * self.impulses_per_kwh)
-        _LOGGER.info(f"✅ Koordynator: Odzyskano stan energii: {restored_kwh} kWh (co odpowiada {self.total_impulses} impulsom).")
+        # Zmieniono INFO na DEBUG (Logowanie rzadkie, ale związane z wewnętrznym stanem)
+        _LOGGER.debug(f"✅ Koordynator: Odzyskano stan energii: {restored_kwh} kWh (co odpowiada {self.total_impulses} impulsom).")
         
         self.data = {
             "power_kw": 0.0,
@@ -97,10 +101,11 @@ class OneMeterCoordinator(DataUpdateCoordinator):
     async def _async_message_received(self, msg):
         """Asynchroniczna obsługa wiadomości MQTT."""
         
-        _LOGGER.info(f"🚨 CALLBACK OTRZYMANY. Temat: {msg.topic}, Długość Payload: {len(msg.payload)} bytes")
+        # Zmieniono INFO na DEBUG (bardzo częste zdarzenie)
+        _LOGGER.debug(f"🚨 CALLBACK OTRZYMANY. Temat: {msg.topic}, Długość Payload: {len(msg.payload)} bytes")
         
         try:
-            # 💡 POPRAWKA BŁĘDU v2.0.36: Bezpieczna konwersja payloadu do stringa.
+            # Użycie poprawnej logiki konwersji i filtrowania MAC (z v2.0.37)
             if isinstance(msg.payload, bytes):
                 raw_payload_str = msg.payload.decode("utf-8")
             elif isinstance(msg.payload, str):
@@ -137,7 +142,8 @@ class OneMeterCoordinator(DataUpdateCoordinator):
             # W formacie GL-S10 każdy odczyt to jeden impuls
             self.total_impulses += 1 
             self.last_impulse_times.append(now) 
-            _LOGGER.info(f"📥 OTRZYMANO IMPULS. Łącznie impulsów: {self.total_impulses}, czas: {now}")
+            # Zmieniono INFO na DEBUG (częste zdarzenie)
+            _LOGGER.debug(f"📥 OTRZYMANO IMPULS. Łącznie impulsów: {self.total_impulses}, czas: {now}")
 
             # --- 2. Obliczenie Mocy (Delta t) ---
             power_kw = 0.0
@@ -164,7 +170,8 @@ class OneMeterCoordinator(DataUpdateCoordinator):
             }
             self.last_update_success = True
             self.async_set_updated_data(self.data)
-            _LOGGER.info(f"📊 Zaktualizowano dane HA: kWh={round(kwh, 3)}, Power={round(avg_power_kw, 3)}kW")
+            # Zmieniono INFO na DEBUG (częste zdarzenie)
+            _LOGGER.debug(f"📊 Zaktualizowano dane HA: kWh={round(kwh, 3)}, Power={round(avg_power_kw, 3)}kW")
 
             # --- 4. Ponowna publikacja przetworzonych danych do MQTT ---
             timestamp_dt = datetime.fromtimestamp(now)
@@ -187,7 +194,8 @@ class OneMeterCoordinator(DataUpdateCoordinator):
                     qos=0, 
                     retain=False
                 )
-                _LOGGER.info(f"📤 Opublikowano przetworzony stan na temacie: {state_topic}")
+                # Zmieniono INFO na DEBUG (częste zdarzenie)
+                _LOGGER.debug(f"📤 Opublikowano przetworzony stan na temacie: {state_topic}")
             except Exception as publish_e:
                  _LOGGER.error(f"❌ BŁĄD PUBLIKACJI: Nie udało się opublikować przetworzonego stanu na MQTT: {publish_e}")
             
@@ -213,7 +221,8 @@ class OneMeterCoordinator(DataUpdateCoordinator):
             )
             
             if callable(self.unsubscribe_mqtt):
-                _LOGGER.info(f"✅ ETAP 3/3: Subskrypcja tematu {self.base_topic} jest AKTYWNA. Funkcja callbacku działa.")
+                # Zmieniono INFO na DEBUG (częste zdarzenie cyklu życia)
+                _LOGGER.debug(f"✅ ETAP 3/3: Subskrypcja tematu {self.base_topic} jest AKTYWNA. Funkcja callbacku działa.")
             else:
                  _LOGGER.error(f"❌ ETAP 3/3: Subskrypcja tematu {self.base_topic} NIEUDANA. Zwrócona wartość: {self.unsubscribe_mqtt}")
 
@@ -225,7 +234,8 @@ class OneMeterCoordinator(DataUpdateCoordinator):
                 qos=1, 
                 retain=True
             )
-            _LOGGER.info(f"✅ Opublikowano status 'online' na temacie: {status_topic}")
+            # Zmieniono INFO na DEBUG (częste zdarzenie cyklu życia)
+            _LOGGER.debug(f"✅ Opublikowano status 'online' na temacie: {status_topic}")
 
         except Exception as e:
             _LOGGER.error(f"🚨 BŁĄD KRYTYCZNY SUBKSKRYPCJI: Wystąpił błąd w async_added_to_hass: {e}")
@@ -241,7 +251,8 @@ class OneMeterCoordinator(DataUpdateCoordinator):
                 qos=1, 
                 retain=True
             )
-            _LOGGER.info(f"🚪 Opublikowano status 'offline' na temacie: {status_topic}")
+            # Ten log już był DEBUG
+            _LOGGER.debug(f"🚪 Opublikowano status 'offline' na temacie: {status_topic}")
         except Exception as e:
             _LOGGER.error(f"❌ Nie udało się opublikować statusu MQTT 'offline': {e}")
         
@@ -267,6 +278,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     if last_state and last_state.state:
         try:
             restored_kwh = float(last_state.state)
+            # INFO: Loguje tylko raz podczas startu, więc zostawiamy jako INFO.
             _LOGGER.info(f"✅ Odzyskano ostatni stan sensora {entity_id_to_restore}: {restored_kwh} kWh.")
         except ValueError:
             _LOGGER.warning(f"Nie udało się odzyskać stanu: Nieprawidłowa wartość '{last_state.state}'. Używam 0.0 kWh.")
@@ -312,7 +324,7 @@ class OneMeterBaseSensor(SensorEntity):
             name="OneMeter",
             manufacturer="OneMeter",
             model="Energy Meter",
-            sw_version="2.0.38", # Zaktualizowany numer wersji
+            sw_version="2.0.39", # Zaktualizowany numer wersji
         )
 
     @property
@@ -365,14 +377,12 @@ class OneMeterPowerSensor(OneMeterBaseSensor):
 
 class OneMeterForecastSensor(OneMeterBaseSensor, RestoreEntity):
     """Sensor prognozy miesięcznego zużycia (kWh)."""
+    # 💡 Poprawki nazewnictwa i ostrzeżeń HA (v2.0.37/38)
+    _attr_translation_key = "monthly_forecast_kwh" 
+    _attr_name = "Prognoza miesięczna"
     
-    # ❌ Usunięto: _attr_device_class = SensorDeviceClass.ENERGY
-    # 💡 POPRAWKA BŁĘDU v2.0.38: Usunięcie device_class. Pozostawienie measurement jest teraz prawidłowe.
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
     _attr_state_class = SensorStateClass.MEASUREMENT
-    
-    _attr_translation_key = "monthly_forecast_kwh" 
-    _attr_name = "Prognoza miesięczna" # Zapewnia prawidłową nazwę
 
     @property
     def native_value(self) -> StateType:
@@ -387,6 +397,7 @@ class OneMeterForecastSensor(OneMeterBaseSensor, RestoreEntity):
         current_month = now_dt.month
         
         if current_month != self.coordinator.last_month_checked:
+            # INFO: Ten log jest rzadki (raz w miesiącu), więc zostawiamy go jako INFO.
             _LOGGER.info(f"🔄 Zmiana miesiąca wykryta. Reset prognozy.")
             self.coordinator.kwh_at_month_start = kwh 
             self.coordinator.last_month_checked = current_month

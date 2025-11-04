@@ -1,7 +1,7 @@
 {
   "domain": "onemeter",
   "name": "OneMeter",
-  "version": "2.0.38", 
+  "version": "2.0.39", 
   "documentation": "https://github.com/arekh5/onemeter_hacs",
   "dependencies": ["mqtt"],
   "codeowners": ["@arekh5"],
