@@ -88,8 +88,9 @@ class OneMeterCoordinator(DataUpdateCoordinator):
     async def _async_message_received(self, msg):
         """Asynchroniczna obsługa wiadomości MQTT."""
         
-        # DODATKOWE LOGOWANIE (v2.0.13), aby potwierdzić wywołanie callbacku
-        _LOGGER.info(f"✅ CALLBACK WYWOŁANY. Temat: {msg.topic}, Payload: {len(msg.payload)} bytes")
+        # KRYTYCZNA WERYFIKACJA (v2.0.16): Wymuszenie logowania na poziomie ERROR
+        # To musi się pojawić, jeśli callback jest wywołany
+        _LOGGER.error(f"🚨 CALLBACK OTRZYMANY. Temat: {msg.topic}, Długość Payload: {len(msg.payload)} bytes")
         
         try:
             payload = json.loads(msg.payload.decode("utf-8"))
@@ -219,7 +220,7 @@ class OneMeterCoordinator(DataUpdateCoordinator):
 # ----------------------------------------------------------------------
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities):
-    """Tworzenie encji sensorów z obsługą odzyskiwania stanu Koordynatora (v2.0.14)."""
+    """Tworzenie encji sensorów z obsługą odzyskiwania stanu Koordynatora (v2.0.16)."""
     
     coordinator = OneMeterCoordinator(hass, entry)
 
@@ -256,8 +257,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 # ----------------------------------------------------------------------
 
 class OneMeterBaseSensor(RestoreEntity):
-    """Bazowa klasa sensora."""
-    
+# ... (reszta klas sensorów bez zmian)
     def __init__(self, coordinator: OneMeterCoordinator):
         self.coordinator = coordinator
         self._attr_device_info = DeviceInfo(
@@ -286,7 +286,7 @@ class OneMeterEnergySensor(OneMeterBaseSensor):
     _attr_name = "Energy"
     _attr_device_class = SensorDeviceClass.ENERGY
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
-    _attr_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR 
+    _attr_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
     
     def __init__(self, coordinator: OneMeterCoordinator):
         super().__init__(coordinator)
@@ -305,7 +305,7 @@ class OneMeterPowerSensor(OneMeterBaseSensor):
     _attr_name = "Power"
     _attr_device_class = SensorDeviceClass.POWER
     _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_unit_of_measurement = UnitOfPower.KILO_WATT 
+    _attr_unit_of_measurement = UnitOfPower.KILO_WATT
     
     def __init__(self, coordinator: OneMeterCoordinator):
         super().__init__(coordinator)
@@ -372,7 +372,7 @@ class OneMeterForecastSensor(OneMeterBaseSensor):
         # 1. Sprawdzenie zmiany miesiąca (reset licznika na start miesiąca)
         if current_month != self.coordinator.last_month_checked:
             _LOGGER.info(f"🔄 Zmiana miesiąca wykryta. Reset prognozy.")
-            self.coordinator.kwh_at_month_start = kwh 
+            self.coordinator.kwh_at_month_start = kwh
             self.coordinator.last_month_checked = current_month
             self.coordinator.month_start_timestamp = time.time() 
         # Inicjalizacja stanu, jeśli HA wystartował po raz pierwszy w tym miesiącu
