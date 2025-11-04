@@ -2,15 +2,14 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.core import callback
-# from homeassistant.const import CONF_MAC, CONF_DEVICE_ID, CONF_TOPIC, CONF_TIMEOUT # ❌ USUNIĘTO - Powód Błędu
 
 DOMAIN = "onemeter"
 
-# Własne stałe konfiguracyjne (i stałe z homeassistant.const, które są niedostępne)
-CONF_DEVICE_ID = "device_id" # ✅ Dodano lokalnie
-CONF_MAC = "mac"             # ✅ Dodano lokalnie
-CONF_TOPIC = "topic"         # ✅ Dodano lokalnie
-CONF_TIMEOUT = "timeout"     # ✅ Dodano lokalnie
+# Własne stałe konfiguracyjne (lokalna definicja w celu uniknięcia błędu importu z homeassistant.const)
+CONF_DEVICE_ID = "device_id" 
+CONF_MAC = "mac"             
+CONF_TOPIC = "topic"         
+CONF_TIMEOUT = "power_timeout_seconds" # Używamy nazwy klucza z sensor.py (dla spójności)
 
 CONF_INITIAL_KWH = "initial_kwh" 
 CONF_IMPULSES_PER_KWH = "impulses_per_kwh"
@@ -24,7 +23,7 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
         vol.Required(CONF_MAC, default="E58D81019613"): str,
         vol.Required(CONF_TOPIC, default="onemeter/s10/v1"): str,
         
-        # 💡 DODANE: Stan początkowy licznika (wykorzystywany jako baza)
+        # Stan początkowy licznika
         vol.Required(CONF_INITIAL_KWH, default=0.0): vol.Coerce(float), 
     }
 )
@@ -35,7 +34,7 @@ STEP_METER_DATA_SCHEMA = vol.Schema(
         vol.Required(CONF_IMPULSES_PER_KWH, default=1000): vol.Coerce(int),
         vol.Required(CONF_MAX_POWER_KW, default=20.0): vol.Coerce(float),
         vol.Required(CONF_POWER_AVERAGE_WINDOW, default=2): vol.Coerce(int),
-        vol.Required(CONF_TIMEOUT, default=300): vol.Coerce(int), # Power timeout
+        vol.Required(CONF_TIMEOUT, default=300): vol.Coerce(int), 
     }
 )
 
@@ -84,12 +83,17 @@ class OneMeterOptionsFlowHandler(config_entries.OptionsFlow):
     """Edycja ustawień integracji OneMeter (Options Flow)."""
 
     def __init__(self, config_entry):
-        self.config_entry = config_entry
+        """Inicjalizacja Options Flow."""
+        # ❌ USUNIĘTO: Przestarzałe przypisanie. Home Assistant zarządza tym wewnętrznie.
+        # self.config_entry = config_entry 
+        pass
 
     async def async_step_init(self, user_input=None):
+        """Zarządzanie opcjami."""
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
 
+        # Używamy self.config_entry dostarczonego przez klasę bazową
         current = {**self.config_entry.data, **self.config_entry.options}
         
         # Pamiętaj, że wartości initial_kwh również mogą być edytowane
