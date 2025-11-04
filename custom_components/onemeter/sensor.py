@@ -95,8 +95,15 @@ class OneMeterCoordinator(DataUpdateCoordinator):
         _LOGGER.info(f"🚨 CALLBACK OTRZYMANY. Temat: {msg.topic}, Długość Payload: {len(msg.payload)} bytes")
         
         try:
-            raw_payload_str = msg.payload.decode("utf-8")
-            
+            # 💡 POPRAWKA BŁĘDU v2.0.36: Bezpieczna konwersja payloadu do stringa.
+            if isinstance(msg.payload, bytes):
+                raw_payload_str = msg.payload.decode("utf-8")
+            elif isinstance(msg.payload, str):
+                raw_payload_str = msg.payload
+            else:
+                 _LOGGER.error(f"❌ Nieznany typ payloadu MQTT: {type(msg.payload)}. Oczekiwano bytes lub str.")
+                 return
+
             # Bezpośrednie parsowanie JSON
             payload = json.loads(raw_payload_str)
             
@@ -182,6 +189,7 @@ class OneMeterCoordinator(DataUpdateCoordinator):
         except json.JSONDecodeError as e:
             _LOGGER.error(f"❌ Błąd parsowania JSON wiadomości MQTT: {e}")
         except Exception as e:
+            # Właśnie tutaj wcześniej trafiał 'str' object has no attribute 'decode'
             _LOGGER.error(f"❌ Błąd krytyczny przetwarzania wiadomości MQTT: {e}")
 
     async def async_added_to_hass(self) -> None:
@@ -236,9 +244,7 @@ class OneMeterCoordinator(DataUpdateCoordinator):
         if self.unsubscribe_mqtt:
             self.unsubscribe_mqtt()
             
-        # ❌ POPRAWKA BŁĘDU (v2.0.35): Usunięcie wywołania super().async_will_remove_from_hass()
-        # Ponieważ DataUpdateCoordinator tego nie implementuje lub nie jest to wymagane.
-        pass
+        pass # Celowo pomijamy super().async_will_remove_from_hass()
 
 # ----------------------------------------------------------------------
 # ASYNCHRONICZNE SETUP (TWORZENIE ENCJACH)
@@ -302,7 +308,7 @@ class OneMeterBaseSensor(SensorEntity):
             name="OneMeter",
             manufacturer="OneMeter",
             model="Energy Meter",
-            sw_version="2.0.35", # Zaktualizowany numer wersji
+            sw_version="2.0.36", # Zaktualizowany numer wersji
         )
 
     @property
