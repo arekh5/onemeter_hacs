@@ -381,7 +381,7 @@ class OneMeterBaseSensor(SensorEntity):
             name="OneMeter",
             manufacturer="OneMeter",
             model="Energy Meter",
-            sw_version="2.0.61", # ✅ NOWY NUMER WERSJI
+            sw_version="2.0.62", # ✅ NOWY NUMER WERSJI
         )
 
     @property
@@ -392,7 +392,7 @@ class OneMeterBaseSensor(SensorEntity):
     async def async_added_to_hass(self) -> None:
         """Rejestracja callbacku po dodaniu encji."""
         
-        # 1. FIX: Tworzymy synchroniczny callback, który planuje asynchroniczną aktualizację
+        # 1. Tworzymy synchroniczny callback, który planuje asynchroniczną aktualizację
         @callback
         def update_from_coordinator():
             """Handle coordinator update."""
@@ -402,7 +402,7 @@ class OneMeterBaseSensor(SensorEntity):
             self.coordinator.async_add_listener(update_from_coordinator)
         )
         
-        # 2. FIX: Wywołujemy super().async_added_to_hass() TYLKO dla encji RestoreEntity,
+        # 2. Wywołujemy super().async_added_to_hass() TYLKO dla encji RestoreEntity,
         if isinstance(self, RestoreEntity):
              await super().async_added_to_hass()
 
@@ -422,25 +422,17 @@ class OneMeterEnergySensor(OneMeterBaseSensor, RestoreEntity):
         return None
 
 class OneMeterPowerSensor(OneMeterBaseSensor):
-    """Sensor mocy chwilowej (kW). Teraz poprawnie ogranicza zapis do bazy danych."""
+    """Sensor mocy chwilowej (kW). Teraz działa w oparciu o Koordynatora."""
     _attr_native_unit_of_measurement = UnitOfPower.KILO_WATT
     _attr_device_class = SensorDeviceClass.POWER
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_translation_key = "power_kw"
     
-    # MECHANIZM THROTTLINGU
-    def __init__(self, coordinator: OneMeterCoordinator):
-        super().__init__(coordinator)
-        # Przechowujemy czas ostatniego ZAPISU stanu do bazy HA
-        self._last_write_time = 0.0
-        # Maksymalna częstotliwość zapisywania stanu do bazy to co 5 sekund
-        self._throttle_interval = 5.0 
-        # Przechowujemy ostatnią ZAPISANĄ wartość (dla wykrycia istotnych skoków)
-        self._last_recorded_power = -1.0 
+    # ✅ USUNIĘCIE: Usunięto logikę throttling (inicjalizację atrybutów)
 
     @property
     def native_value(self) -> StateType:
-        """Zawsze zwraca obecną, uśrednioną wartość mocy (bez throttling'u)."""
+        """Zawsze zwraca obecną, uśrednioną wartość mocy."""
         
         if self.coordinator.data is None:
             return None
@@ -455,38 +447,8 @@ class OneMeterPowerSensor(OneMeterBaseSensor):
         
         return round(current_power, 3)
 
-    # ✅ OSTATECZNY FIX: Zmieniamy z powrotem na funkcję asynchroniczną i używamy 'await'.
-    # To jest najlepszy sposób na interakcję z asynchroniczną metodą bazową,
-    # minimalizując ryzyko błędów inicjalizacji.
-    async def async_write_ha_state(self) -> None:
-        """Nadpisuje metodę zapisu, aby poprawnie ograniczyć częstotliwość do bazy danych,
-        używając 'await' do bezpiecznego wywołania funkcji bazowej."""
-        now = time.time()
-        current_power = self.native_value
-        
-        if current_power is None:
-            # Nawet jeśli current_power jest None, musimy wywołać metodę bazową, 
-            # by platforma mogła dokończyć inicjalizację, używając 'await'.
-            await super().async_write_ha_state()
-            return
-            
-        # 1. Warunki do NATYCHMIASTOWEGO ZAPISU:
-        time_elapsed = now - self._last_write_time
-        is_significant_change = abs(current_power - self._last_recorded_power) > 0.5 # Skok o 0.5 kW
-        is_timeout_change = current_power == 0.0 and self._last_recorded_power > 0.0 # Przejście na 0.0 kW
-        
-        should_write = (
-            time_elapsed >= self._throttle_interval or 
-            is_timeout_change or 
-            is_significant_change
-        )
-        
-        # 2. Logika zapisu
-        if should_write:
-            self._last_write_time = now
-            self._last_recorded_power = current_power
-            # Używamy await do bezpiecznego wywołania metody bazowej
-            await super().async_write_ha_state()
+    # ✅ USUNIĘCIE: Usunięto całą metodę async_write_ha_state() 
+    # Powrót do domyślnej implementacji, co powinno rozwiązać błędy inicjalizacji.
 
 
 class OneMeterForecastSensor(OneMeterBaseSensor, RestoreEntity):
