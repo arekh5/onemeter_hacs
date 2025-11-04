@@ -22,6 +22,7 @@ from homeassistant.helpers.typing import StateType
 _LOGGER = logging.getLogger(__name__)
 
 DOMAIN = "onemeter"
+PAYLOAD_PREFIX = "v1=" # Nowa stała dla prefiksu payloadu
 
 # ----------------------------------------------------------------------
 # KLASA KOORDYNATORA DANYCH (ZARZĄDZA KLIENTEM MQTT)
@@ -50,7 +51,6 @@ class OneMeterCoordinator(DataUpdateCoordinator):
         self.last_valid_power = 0.0
         
         # --- Parametry ---
-        # Używamy parameters z entry/options
         self.impulses_per_kwh = config.get("impulses_per_kwh", 1000)
         self.max_power_kw = config.get("max_power_kw", 20.0)
         self.power_timeout_seconds = config.get("power_timeout_seconds", 300)
@@ -97,11 +97,19 @@ class OneMeterCoordinator(DataUpdateCoordinator):
         _LOGGER.info(f"🚨 CALLBACK OTRZYMANY. Temat: {msg.topic}, Długość Payload: {len(msg.payload)} bytes")
         
         try:
-            payload = json.loads(msg.payload.decode("utf-8"))
+            raw_payload_str = msg.payload.decode("utf-8")
+            
+            # NOWA LOGIKA: Usuwamy prefiks 'v1='
+            if raw_payload_str.startswith(PAYLOAD_PREFIX):
+                json_str = raw_payload_str[len(PAYLOAD_PREFIX):]
+            else:
+                json_str = raw_payload_str
+            
+            payload = json.loads(json_str)
+            
             dev_list = payload.get("dev_list", [])
             
             # --- 1. Znajdź wpis dla docelowego urządzenia OneMeter w dev_list (FORMAT GL-S10) ---
-            # Zapewnienie, że porównanie jest niewrażliwe na wielkość liter
             target_mac_upper = self.target_mac.upper() 
             onemeter_entry = next((
                 dev for dev in dev_list if dev.get("mac", "").upper() == target_mac_upper
@@ -167,7 +175,6 @@ class OneMeterCoordinator(DataUpdateCoordinator):
             
             state_topic = f"onemeter/energy/{self.device_id}/state"
             try:
-                # Wymagamy, aby globalny klient HA MQTT działał
                 await mqtt.async_publish(
                     self.hass, 
                     state_topic, 
@@ -180,22 +187,20 @@ class OneMeterCoordinator(DataUpdateCoordinator):
                  _LOGGER.error(f"❌ BŁĄD PUBLIKACJI: Nie udało się opublikować przetworzonego stanu na MQTT: {publish_e}")
             
         except json.JSONDecodeError as e:
-            _LOGGER.error(f"❌ Błąd parsowania JSON wiadomości MQTT: {e}")
+            # W tym miejscu teraz logujemy błąd JSON, jeśli po usunięciu prefiksu jest nadal niepoprawny
+            _LOGGER.error(f"❌ Błąd parsowania JSON wiadomości MQTT (po usunięciu prefiksu): {e}")
         except Exception as e:
             _LOGGER.error(f"❌ Błąd krytyczny przetwarzania wiadomości MQTT: {e}")
 
     async def async_added_to_hass(self) -> None:
         """Subskrypcja MQTT i ustawienie statusu urządzenia (po gotowości klienta)."""
         
-        # AGRESYWNE LOGOWANIE STARTU
         _LOGGER.info("🚨 ETAP 1/3: Rozpoczynanie procesu subskrypcji MQTT dla Koordynatora.")
         
         try:
-            # Czekanie na gotowość klienta MQTT (musi być skonfigurowany)
             await mqtt.async_when_ready(self.hass)
             _LOGGER.info("🚨 ETAP 2/3: Klient MQTT Home Assistanta jest GOTOWY do subskrypcji.")
 
-            # 1. SUBSKRYPCJA GŁÓWNEGO TEMATU
             self.unsubscribe_mqtt = await mqtt.async_subscribe(
                 self.hass,
                 self.base_topic,
@@ -204,13 +209,11 @@ class OneMeterCoordinator(DataUpdateCoordinator):
                 encoding="utf-8"
             )
             
-            # AGRESYWNE LOGOWANIE WERYFIKACYJNE
             if callable(self.unsubscribe_mqtt):
                 _LOGGER.info(f"✅ ETAP 3/3: Subskrypcja tematu {self.base_topic} jest AKTYWNA. Funkcja callbacku działa.")
             else:
                  _LOGGER.error(f"❌ ETAP 3/3: Subskrypcja tematu {self.base_topic} NIEUDANA. Zwrócona wartość: {self.unsubscribe_mqtt}")
 
-            # 2. PUBLIKACJA STATUSU
             status_topic = f"onemeter/energy/{self.device_id}/status"
             await mqtt.async_publish(
                 self.hass, 
@@ -227,7 +230,7 @@ class OneMeterCoordinator(DataUpdateCoordinator):
         await super().async_added_to_hass()
         
     async def async_will_remove_from_hass(self) -> None:
-        # ... (kod usuwania)
+        """Usuwanie subskrypcji i statusu offline."""
         status_topic = f"onemeter/energy/{self.device_id}/status"
         try:
             await mqtt.async_publish(
@@ -244,7 +247,47 @@ class OneMeterCoordinator(DataUpdateCoordinator):
         if self.unsubscribe_mqtt:
             self.unsubscribe_mqtt()
         await super().async_will_remove_from_hass()
-        
-# ... (reszta klas sensorów)
-# ... (kod klas sensorów jest taki sam jak w v2.0.23)
-# ...
+
+# ----------------------------------------------------------------------
+# ASYNCHRONICZNE SETUP (TWORZENIE ENCJACH - DLA POPRAWKI BŁĘDU SETUP)
+# ----------------------------------------------------------------------
+
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities):
+    """Tworzenie encji sensorów z obsługą odzyskiwania stanu Koordynatora."""
+    
+    coordinator = OneMeterCoordinator(hass, entry)
+
+    # 1. Odzyskujemy stan kWh 
+    entity_id_to_restore = f"sensor.{coordinator.device_id}_energy_kwh"
+    last_state = hass.states.get(entity_id_to_restore)
+    
+    restored_kwh = 0.0
+    if last_state and last_state.state:
+        try:
+            restored_kwh = float(last_state.state)
+            _LOGGER.info(f"✅ Odzyskano ostatni stan sensora {entity_id_to_restore}: {restored_kwh} kWh.")
+        except ValueError:
+            _LOGGER.warning(f"Nie udało się odzyskać stanu: Nieprawidłowa wartość '{last_state.state}'. Używam 0.0 kWh.")
+
+    # 2. Inicjalizujemy Koordynatora odzyskanym stanem
+    await coordinator._async_restore_state(restored_kwh)
+    
+    # 🚨 KRYTYCZNA AKTYWACJA
+    await coordinator.async_config_entry_first_refresh()
+    
+    # 3. Dodajemy Koordynatora do HA
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
+
+    # 4. Dodajemy Encje
+    async_add_entities([
+        OneMeterEnergySensor(coordinator),
+        OneMeterPowerSensor(coordinator),
+        OneMeterForecastSensor(coordinator),
+    ])
+    
+    return True
+
+# ----------------------------------------------------------------------
+# KLASY ENCJACH (SENSORÓW - Bez zmian)
+# ----------------------------------------------------------------------
+# ... (pozostałe klasy sensorów OneMeterBaseSensor, OneMeterEnergySensor, OneMeterPowerSensor, OneMeterForecastSensor muszą być tutaj w całości)

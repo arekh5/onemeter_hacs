@@ -15,8 +15,9 @@ class OneMeterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             return self.async_create_entry(title="OneMeter", data=user_input)
 
+        # Ustawienia domyślne dla nowej konfiguracji
         schema = vol.Schema({
-            # Domyślne wartości dla konfiguracji MQTT
+            # Parametry MQTT (teoretycznie do usunięcia, ale zachowane na razie)
             vol.Required("mqtt_broker", default="127.0.0.1"): str,
             vol.Required("mqtt_port", default=1883): int,
             vol.Required("mqtt_user", default="mqtt"): str,
@@ -42,25 +43,28 @@ class OneMeterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 class OneMeterOptionsFlowHandler(config_entries.OptionsFlow):
-    """Edycja ustawień integracji OneMeter."""
+    """Edycja ustawień integracji OneMeter (Options Flow)."""
 
     def __init__(self, config_entry):
-        pass
+        """Inicjalizacja Options Flow."""
+        self.config_entry = config_entry
 
     async def async_step_init(self, user_input=None):
+        """Zarządzanie opcjami."""
         if user_input is not None:
-            # Zapisuje nowe opcje
+            # Aktualizacja opcji (kluczowe do zapisu zmian)
             return self.async_create_entry(title="", data=user_input)
 
-        # Łączymy data i options dla edycji
+        # Pobieramy bieżące dane i opcje, aby wypełnić formularz
         current = {**self.config_entry.data, **self.config_entry.options}
 
-        # POPRAWKA BŁĘDU: Usunięto błędy składni w poniższych dwóch liniach
         schema = vol.Schema({
+            # Parametry MQTT
             vol.Required("mqtt_broker", default=current.get("mqtt_broker", "127.0.0.1")): str,
             vol.Required("mqtt_port", default=current.get("mqtt_port", 1883)): int,
             vol.Required("mqtt_user", default=current.get("mqtt_user", "mqtt")): str,
             vol.Required("mqtt_pass", default=current.get("mqtt_pass", "mqtt")): str,
+            # Parametry licznika
             vol.Optional("impulses_per_kwh", default=current.get("impulses_per_kwh", 1000)): int,
             vol.Optional("max_power_kw", default=current.get("max_power_kw", 20)): int,
             vol.Optional("power_average_window", default=current.get("power_average_window", 2)): int,
