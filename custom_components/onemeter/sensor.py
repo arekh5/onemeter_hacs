@@ -368,8 +368,7 @@ class OneMeterBaseSensor(SensorEntity):
     """Baza dla sensorów OneMeter."""
     _attr_has_entity_name = True
     _attr_translation_key: str 
-    # ✅ FIX: Ustawiamy polling na False, bo używamy Koordynatora i aktualizujemy stan tylko w wywołaniach MQTT
-    # Dzieki temu Entity Platform nie próbuje wywoływać async_write_ha_state() w nieodpowiednim momencie.
+    # FIX: Ustawiamy polling na False, bo używamy Koordynatora i aktualizujemy stan tylko w wywołaniach MQTT
     _attr_should_poll = False 
 
     def __init__(self, coordinator: OneMeterCoordinator):
@@ -382,7 +381,7 @@ class OneMeterBaseSensor(SensorEntity):
             name="OneMeter",
             manufacturer="OneMeter",
             model="Energy Meter",
-            sw_version="2.0.60", # ✅ NOWY NUMER WERSJI
+            sw_version="2.0.61", # ✅ NOWY NUMER WERSJI
         )
 
     @property
@@ -456,15 +455,21 @@ class OneMeterPowerSensor(OneMeterBaseSensor):
         
         return round(current_power, 3)
 
-    # ✅ OSTATECZNY FIX NA TypeError: a coroutine was expected, got None
-    # Zmieniamy typ na synchroniczny, aby pasował do oczekiwań platformy (która wywołuje go bez 'await').
-    # Zwracamy None i używamy self.hass.async_create_task do asynchronicznego wywołania metody bazowej.
-    def async_write_ha_state(self) -> None:
+    # ✅ OSTATECZNY FIX: Zmieniamy z powrotem na funkcję asynchroniczną i używamy 'await'.
+    # To jest najlepszy sposób na interakcję z asynchroniczną metodą bazową,
+    # minimalizując ryzyko błędów inicjalizacji.
+    async def async_write_ha_state(self) -> None:
         """Nadpisuje metodę zapisu, aby poprawnie ograniczyć częstotliwość do bazy danych,
-        planując asynchroniczne wywołanie w pętli zdarzeń."""
+        używając 'await' do bezpiecznego wywołania funkcji bazowej."""
         now = time.time()
         current_power = self.native_value
         
+        if current_power is None:
+            # Nawet jeśli current_power jest None, musimy wywołać metodę bazową, 
+            # by platforma mogła dokończyć inicjalizację, używając 'await'.
+            await super().async_write_ha_state()
+            return
+            
         # 1. Warunki do NATYCHMIASTOWEGO ZAPISU:
         time_elapsed = now - self._last_write_time
         is_significant_change = abs(current_power - self._last_recorded_power) > 0.5 # Skok o 0.5 kW
@@ -480,14 +485,8 @@ class OneMeterPowerSensor(OneMeterBaseSensor):
         if should_write:
             self._last_write_time = now
             self._last_recorded_power = current_power
-            # Kluczowy FIX: Planowanie asynchronicznego wywołania w pętli zdarzeń.
-            # Zapewnia to, że:
-            # a) nie łapiemy RuntimeWarning
-            # b) nie otrzymujemy TypeError: a coroutine was expected, got None (bo zwracamy coroutine do async_create_task)
-            self.hass.async_create_task(super().async_write_ha_state())
-        
-        # Funkcja musi zwrócić None (ponieważ jest teraz zdefiniowana jako synchroniczna)
-        return None
+            # Używamy await do bezpiecznego wywołania metody bazowej
+            await super().async_write_ha_state()
 
 
 class OneMeterForecastSensor(OneMeterBaseSensor, RestoreEntity):
