@@ -16,7 +16,7 @@ class OneMeterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return self.async_create_entry(title="OneMeter", data=user_input)
 
         schema = vol.Schema({
-            # Dane MQTT są zbierane, ale ignorowane w sensor.py - używamy globalnej konfiguracji HA MQTT
+            # Domyślne wartości dla konfiguracji MQTT
             vol.Required("mqtt_broker", default="127.0.0.1"): str,
             vol.Required("mqtt_port", default=1883): int,
             vol.Required("mqtt_user", default="mqtt"): str,
@@ -45,7 +45,6 @@ class OneMeterOptionsFlowHandler(config_entries.OptionsFlow):
     """Edycja ustawień integracji OneMeter."""
 
     def __init__(self, config_entry):
-        # Konfiguracja jest dostępna przez self.config_entry
         pass
 
     async def async_step_init(self, user_input=None):
@@ -56,11 +55,12 @@ class OneMeterOptionsFlowHandler(config_entries.OptionsFlow):
         # Łączymy data i options dla edycji
         current = {**self.config_entry.data, **self.config_entry.options}
 
+        # POPRAWKA BŁĘDU: Usunięto błędy składni w poniższych dwóch liniach
         schema = vol.Schema({
             vol.Required("mqtt_broker", default=current.get("mqtt_broker", "127.0.0.1")): str,
             vol.Required("mqtt_port", default=current.get("mqtt_port", 1883)): int,
-            vol.Required("mqtt_user", default=current.get("mqtt_user", "mqtt\")): str,
-            vol.Required("mqtt_pass", default=current.get("mqtt_pass", "mqtt\")): str,
+            vol.Required("mqtt_user", default=current.get("mqtt_user", "mqtt")): str,
+            vol.Required("mqtt_pass", default=current.get("mqtt_pass", "mqtt")): str,
             vol.Optional("impulses_per_kwh", default=current.get("impulses_per_kwh", 1000)): int,
             vol.Optional("max_power_kw", default=current.get("max_power_kw", 20)): int,
             vol.Optional("power_average_window", default=current.get("power_average_window", 2)): int,
