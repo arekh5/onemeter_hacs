@@ -69,7 +69,7 @@ class OneMeterCoordinator(DataUpdateCoordinator):
             update_interval=None 
         )
 
-    # 🚨 POPRAWKA: Pusta metoda wymagana przez DataUpdateCoordinator
+    # 🚨 POPRAWKA v2.0.19: Pusta metoda wymagana przez DataUpdateCoordinator
     async def _async_update_data(self):
         """Metoda wymagana przez DataUpdateCoordinator, ale nieużywana (dane pochodzą z MQTT)."""
         # Dane są aktualizowane asynchronicznie przez MQTT Callback.
@@ -234,7 +234,7 @@ class OneMeterCoordinator(DataUpdateCoordinator):
 # ----------------------------------------------------------------------
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities):
-    """Tworzenie encji sensorów z obsługą odzyskiwania stanu Koordynatora (v2.0.19)."""
+    """Tworzenie encji sensorów z obsługą odzyskiwania stanu Koordynatora (v2.0.21)."""
     
     coordinator = OneMeterCoordinator(hass, entry)
 
@@ -266,7 +266,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         OneMeterForecastSensor(coordinator),
     ])
     
-    # Zwrócenie True jest standardem dla forward_entry_setups
     return True
 
 
