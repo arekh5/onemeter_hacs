@@ -379,7 +379,7 @@ class OneMeterBaseSensor(SensorEntity):
             name="OneMeter",
             manufacturer="OneMeter",
             model="Energy Meter",
-            sw_version="2.0.56", # ✅ NOWY NUMER WERSJI
+            sw_version="2.0.58", # ✅ NOWY NUMER WERSJI
         )
 
     @property
@@ -390,18 +390,20 @@ class OneMeterBaseSensor(SensorEntity):
     async def async_added_to_hass(self) -> None:
         """Rejestracja callbacku po dodaniu encji. POPRAWKA NA RuntimeWarning."""
         
-        # ✅ FIX: Tworzymy synchroniczny callback, który planuje asynchroniczną aktualizację,
+        # 1. FIX: Tworzymy synchroniczny callback, który planuje asynchroniczną aktualizację (dla coordinator.py)
         @callback
         def update_from_coordinator():
             """Handle coordinator update."""
-            # To wywoła asynchroniczne 'async_write_ha_state' (w tym naszą wersję throttlującą)
             self.async_schedule_update_ha_state(True) 
 
         self.async_on_remove(
             self.coordinator.async_add_listener(update_from_coordinator)
         )
         
-        if not isinstance(self, RestoreEntity):
+        # 2. ✅ FIX NA BŁĄD RuntimeWarning: Omijamy wywołanie metody bazowej Entity
+        # dla sensorów, które NIE odzyskują stanu (PowerSensor).
+        # Wywołujemy ją tylko dla RestoreEntity, gdzie jest potrzebna do przywrócenia stanu.
+        if isinstance(self, RestoreEntity):
              await super().async_added_to_hass()
 
 class OneMeterEnergySensor(OneMeterBaseSensor, RestoreEntity):
@@ -492,7 +494,6 @@ class OneMeterForecastSensor(OneMeterBaseSensor, RestoreEntity):
     
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
     
-    # ✅ POPRAWKA: Usunięcie zbędnej i błędnej rejestracji listenera
     async def async_added_to_hass(self) -> None:
         """Wywołane, gdy encja jest dodawana do Home Assistant."""
         
@@ -501,14 +502,13 @@ class OneMeterForecastSensor(OneMeterBaseSensor, RestoreEntity):
         if last_state is not None:
              try:
                  restored_value = float(last_state.state)
+                 # Ustawienie stanu w Koordynatorze przed wywołaniem base class, które może odtworzyć stan
                  self.coordinator.set_forecast_state(last_state.attributes, restored_value)
 
              except (ValueError, TypeError):
                  _LOGGER.warning("Nie udało się odzyskać ostatniej wartości Prognozy lub jej atrybutów. Używam domyślnych/obecnych.")
                  
-        # Używamy asynchronicznej metody z klasy bazowej, która zawiera już poprawny listener.
-        # Musimy wywołać super() z argumentem dla RestoreEntity, aby nie rejestrować listenera
-        # dwukrotnie, ale zachować całą logikę added_to_hass.
+        # Używamy metody z OneMeterBaseSensor, która poprawnie wywoła RestoreEntity.async_added_to_hass
         await super(OneMeterBaseSensor, self).async_added_to_hass()
 
 
