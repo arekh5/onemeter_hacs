@@ -223,7 +223,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     
     coordinator = OneMeterCoordinator(hass, entry)
 
-    # 1. POPRAWKA (v2.0.14): Odzyskujemy stan kWh BEZ tworzenia tymczasowej encji
+    # 1. POPRAWKA: Odzyskujemy stan kWh BEZ tworzenia tymczasowej encji
     entity_id_to_restore = f"sensor.{coordinator.device_id}_energy_kwh"
     
     # Pobieranie ostatniego znanego stanu bezpośrednio z serwisu stanów HA
@@ -391,4 +391,8 @@ class OneMeterForecastSensor(OneMeterBaseSensor):
         # Zapisz stan do atrybutów dla persystencji
         self._attr_extra_state_attributes = {
             "kwh_at_month_start": round(self.coordinator.kwh_at_month_start, 3),
-            "last_month
+            "last_month_checked": self.coordinator.last_month_checked,
+            "current_month_kwh": round(current_month_kwh, 3)
+        }
+
+        return round(forecast_kwh, 3)
