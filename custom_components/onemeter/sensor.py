@@ -4,7 +4,7 @@ import logging
 from datetime import datetime
 from collections import deque
 from calendar import monthrange 
-from datetime import timedelta # Importujemy timedelta
+from datetime import timedelta 
 
 from homeassistant.components.sensor import (
     SensorEntity,
@@ -19,13 +19,13 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.components import mqtt
 from homeassistant.const import UnitOfEnergy, UnitOfPower
 from homeassistant.helpers.typing import StateType
-from homeassistant.helpers.event import async_track_time_interval # Import na wszelki wypadek, ale używamy DataUpdateCoordinator
+from homeassistant.helpers.event import async_track_time_interval 
 
 _LOGGER = logging.getLogger(__name__)
 
 DOMAIN = "onemeter"
 
-# Stałe Konfiguracyjne (lokalna definicja dla spójności)
+# Stałe Konfiguracyjne
 CONF_DEVICE_ID = "device_id"
 CONF_MAC = "mac"
 CONF_TOPIC = "topic"
@@ -64,11 +64,11 @@ class OneMeterCoordinator(DataUpdateCoordinator):
         self.power_history = deque(maxlen=config.get(CONF_POWER_AVERAGE_WINDOW, 2))
         self.initial_kwh_setting = config.get(CONF_INITIAL_KWH, 0.0)
 
-        # --- Stan Prognozy (Persystencja/Obliczenia) ---
+        # --- Stan Prognozy ---
         self.kwh_at_month_start = 0.0
         self.last_month_checked = datetime.now().month
         self.month_start_timestamp = time.time()
-        self.latest_forecast_kwh = 0.0 # Ostatnia obliczona prognoza
+        self.latest_forecast_kwh = 0.0 
         
         # Inicjalizacja danych na start
         self.data = None
@@ -90,14 +90,12 @@ class OneMeterCoordinator(DataUpdateCoordinator):
     async def _async_update_data(self):
         """Metoda wywoływana przez Koordynatora co interwał (co 1h). Oblicza PROGNOZĘ."""
         
-        # Obliczenie prognozy następuje tylko co interwał!
         if self.data is not None:
              self.latest_forecast_kwh = self._calculate_forecast(
-                self.data.get("kwh", 0.0), # Używamy bieżącej KWH z danych
-                self.data.get("last_impulse_time", time.time()) # Używamy timestampu impulsu
+                self.data.get("kwh", 0.0), 
+                self.data.get("last_impulse_time", time.time())
              )
         
-        # Wracamy z istniejącymi danymi (które zawierają tylko KWH i Moc)
         return self.data 
 
     def _calculate_forecast(self, current_kwh: float, last_impulse_time: float) -> float:
@@ -118,7 +116,6 @@ class OneMeterCoordinator(DataUpdateCoordinator):
             if elapsed_days > 0:
                 forecast_kwh = (current_month_kwh / elapsed_days) * days_in_month
                 
-        # Zwracamy surowy float, konwersja na int jest w Sensorze
         return forecast_kwh 
 
 
@@ -149,7 +146,6 @@ class OneMeterCoordinator(DataUpdateCoordinator):
         if kwh_start is not None and ts_start is not None:
             self.kwh_at_month_start = float(kwh_start)
             self.month_start_timestamp = float(ts_start)
-            # Ustawiamy odzyskaną wartość prognozy, która powinna być całkowita
             self.latest_forecast_kwh = float(restored_value) 
             
             start_dt = datetime.fromtimestamp(self.month_start_timestamp)
@@ -233,14 +229,13 @@ class OneMeterCoordinator(DataUpdateCoordinator):
             }
             self.last_update_success = True
             
-            # TYLKO INFO O ZMIANIE DANYCH (MOCY/ENERGII)
+            # Zgłaszamy Koordynatorowi, że dane są nowe.
             self.async_set_updated_data(self.data) 
             
             # --- 5. Ponowna publikacja przetworzonych danych do MQTT ---
             timestamp_dt = datetime.fromtimestamp(now)
             timestamp_str = timestamp_dt.strftime("%Y-%m-%d %H:%M:%S")
             
-            # WYSYŁAMY DO MQTT TYLKO KWH I MOC (BEZ PROGNOZY)
             mqtt_payload = {
                 "timestamp": timestamp_str,
                 "impulses": self.total_impulses,
@@ -348,13 +343,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     if last_state_forecast and last_state_forecast.state:
         try:
              restored_value = float(last_state_forecast.state)
-             # Używamy odzyskanych atrybutów do ustawienia stanu startowego prognozy w Koordynatorze
              coordinator.set_forecast_state(last_state_forecast.attributes, restored_value)
         except (ValueError, TypeError):
              _LOGGER.warning("Nie udało się odzyskać ostatniej wartości Prognozy lub jej atrybutów. Używam domyślnych/obecnych.")
 
     await coordinator.async_added_to_hass() 
-    await coordinator.async_config_entry_first_refresh() # Wymusza pierwsze obliczenie prognozy
+    await coordinator.async_config_entry_first_refresh()
     
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
 
@@ -385,7 +379,7 @@ class OneMeterBaseSensor(SensorEntity):
             name="OneMeter",
             manufacturer="OneMeter",
             model="Energy Meter",
-            sw_version="2.0.52", # Numer wersji
+            sw_version="2.0.53", # ✅ Nowy numer wersji
         )
 
     @property
@@ -402,7 +396,7 @@ class OneMeterBaseSensor(SensorEntity):
              await super().async_added_to_hass()
 
 class OneMeterEnergySensor(OneMeterBaseSensor, RestoreEntity):
-    """Sensor energii (kWh), który odzyskuje stan (persistence)."""
+    """Sensor energii (kWh), który odzyskuje stan (persistence). Aktualizuje się przy każdym impulsie."""
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
     _attr_device_class = SensorDeviceClass.ENERGY
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
@@ -417,23 +411,53 @@ class OneMeterEnergySensor(OneMeterBaseSensor, RestoreEntity):
         return None
 
 class OneMeterPowerSensor(OneMeterBaseSensor):
-    """Sensor mocy chwilowej (kW)."""
+    """Sensor mocy chwilowej (kW). Aktualizuje się maksymalnie co 5 sekund."""
     _attr_native_unit_of_measurement = UnitOfPower.KILO_WATT
     _attr_device_class = SensorDeviceClass.POWER
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_translation_key = "power_kw"
+    
+    # ✅ NOWA LOGIKA THROTTLINGU
+    def __init__(self, coordinator: OneMeterCoordinator):
+        super().__init__(coordinator)
+        self._last_reported_time = 0.0
+        # Maksymalna częstotliwość raportowania stanu do bazy to co 5 sekund
+        self._throttle_interval = 5.0 
 
     @property
     def native_value(self) -> StateType:
-        """Zwraca obecną wartość mocy w kW."""
-        if self.coordinator.data is not None:
-            time_since_impulse = time.time() - self.coordinator.data.get("last_impulse_time", 0)
-            
-            if time_since_impulse > self.coordinator.power_timeout_seconds:
-                 return 0.0
-                 
-            return round(self.coordinator.data.get("power_kw", 0.0), 3)
-        return None
+        """Zwraca obecną wartość mocy w kW, ograniczając częstotliwość zapisu."""
+        
+        if self.coordinator.data is None:
+            return None
+
+        time_since_impulse = time.time() - self.coordinator.data.get("last_impulse_time", 0)
+        
+        # 1. Obliczamy bieżącą, uśrednioną moc
+        current_power = self.coordinator.data.get("power_kw", 0.0)
+        
+        # Logika Timeoutu (ustawienie na 0.0, jeśli minął czas)
+        if time_since_impulse > self.coordinator.power_timeout_seconds:
+             current_power = 0.0
+        
+        current_power = round(current_power, 3)
+        now = time.time()
+        
+        # 2. LOGIKA OGRANICZANIA CZĘSTOTLIWOŚCI
+        
+        # A) Jeżeli moc jest 0.0, zawsze raportujemy natychmiast (ważne do oznaczania 'sleep mode' lub 'wyłączone')
+        if current_power == 0.0:
+            self._last_reported_time = now
+            return current_power
+
+        # B) Jeżeli moc > 0.0, sprawdzamy, czy minął minimalny czas
+        if now - self._last_reported_time < self._throttle_interval:
+            # Nie minął minimalny czas -> Zwracamy None, aby Home Assistant POMIJAŁ zapis tego stanu
+            return None 
+
+        # 3. Zapisujemy czas i zwracamy nową wartość (jeśli dotarliśmy tu, to minął minimalny czas)
+        self._last_reported_time = now
+        return current_power
 
 class OneMeterForecastSensor(OneMeterBaseSensor, RestoreEntity):
     """Sensor prognozy miesięcznego zużycia (kWh), aktualizowany co interwał."""
@@ -455,7 +479,6 @@ class OneMeterForecastSensor(OneMeterBaseSensor, RestoreEntity):
              except (ValueError, TypeError):
                  _LOGGER.warning("Nie udało się odzyskać ostatniej wartości Prognozy lub jej atrybutów. Używam domyślnych/obecnych.")
                  
-        # Rejestrujemy listenera na zmiany Koordynatora (który aktualizuje się co 1h)
         self.async_on_remove(
             self.coordinator.async_add_listener(self.async_write_ha_state)
         )
@@ -465,7 +488,7 @@ class OneMeterForecastSensor(OneMeterBaseSensor, RestoreEntity):
 
     @property
     def native_value(self) -> StateType:
-        """Zwraca obecną wartość prognozy z Koordynatora (obliczoną co interwał) jako liczbę całkowitą."""
+        """Zwraca obecną wartość prognozy z Koordynatora jako liczbę całkowitą."""
         
         forecast_kwh = self.coordinator.latest_forecast_kwh 
             
@@ -475,5 +498,4 @@ class OneMeterForecastSensor(OneMeterBaseSensor, RestoreEntity):
             "month_start_timestamp": self.coordinator.month_start_timestamp,
         }
         
-        # Kluczowa zmiana: Konwertujemy na int (po zaokrągleniu do zera miejsc)
         return int(round(forecast_kwh, 0))
