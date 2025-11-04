@@ -288,6 +288,117 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     return True
 
 # ----------------------------------------------------------------------
-# KLASY ENCJACH (SENSORÓW - Bez zmian)
+# KLASY ENCJACH (SENSORÓW)
 # ----------------------------------------------------------------------
-# ... (pozostałe klasy sensorów OneMeterBaseSensor, OneMeterEnergySensor, OneMeterPowerSensor, OneMeterForecastSensor muszą być tutaj w całości)
+
+class OneMeterBaseSensor(SensorEntity):
+    """Baza dla sensorów OneMeter."""
+    _attr_has_entity_name = True
+
+    def __init__(self, coordinator: OneMeterCoordinator):
+        self.coordinator = coordinator
+        self._attr_unique_id = f"{coordinator.device_id}_{self.entity_description.key}"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, coordinator.device_id)},
+            name="OneMeter",
+            manufacturer="OneMeter",
+            model="Energy Meter",
+            sw_version="2.0.28",
+        )
+
+    @property
+    def available(self) -> bool:
+        """Zwraca True, jeśli koordynator ma dane."""
+        return self.coordinator.last_update_success
+
+    async def async_added_to_hass(self) -> None:
+        """Rejestracja callbacku po dodaniu encji."""
+        self.async_on_remove(
+            self.coordinator.async_add_listener(self.async_write_ha_state)
+        )
+        await super().async_added_to_hass()
+
+class OneMeterEnergySensor(OneMeterBaseSensor, RestoreEntity):
+    """Sensor energii (kWh), który odzyskuje stan (persistence)."""
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_translation_key = "energy_kwh"
+    
+    # Dodatkowe atrybuty dla trwałości
+    _attr_extra_state_attributes = {}
+
+    @property
+    def native_value(self) -> StateType:
+        """Zwraca obecną wartość energii w kWh."""
+        if self.coordinator.data is not None:
+            return round(self.coordinator.data.get("kwh", 0.0), 3)
+        return None
+
+class OneMeterPowerSensor(OneMeterBaseSensor):
+    """Sensor mocy chwilowej (kW)."""
+    _attr_native_unit_of_measurement = UnitOfPower.KILO_WATT
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_translation_key = "power_kw"
+
+    @property
+    def native_value(self) -> StateType:
+        """Zwraca obecną wartość mocy w kW."""
+        if self.coordinator.data is not None:
+            # Obliczenie czasu, który upłynął od ostatniego impulsu
+            time_since_impulse = time.time() - self.coordinator.data.get("last_impulse_time", 0)
+            
+            # Weryfikacja timeoutu (zerowanie mocy, jeśli zbyt długo nie ma impulsu)
+            if time_since_impulse > self.coordinator.power_timeout_seconds:
+                 return 0.0
+                 
+            return round(self.coordinator.data.get("power_kw", 0.0), 3)
+        return None
+
+class OneMeterForecastSensor(OneMeterBaseSensor, RestoreEntity):
+    """Sensor prognozy miesięcznego zużycia (kWh)."""
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_translation_key = "forecast_kwh"
+
+    @property
+    def native_value(self) -> StateType:
+        """Oblicza i zwraca prognozę."""
+        forecast_kwh = 0.0
+        
+        if self.coordinator.data is None:
+            return None
+            
+        kwh = self.coordinator.data.get("kwh", 0.0)
+        now_dt = datetime.now()
+        current_month = now_dt.month
+        
+        # 1. Sprawdzenie zmiany miesiąca (reset licznika na start miesiąca)
+        if current_month != self.coordinator.last_month_checked:
+            _LOGGER.info(f"🔄 Zmiana miesiąca wykryta. Reset prognozy.")
+            self.coordinator.kwh_at_month_start = kwh 
+            self.coordinator.last_month_checked = current_month
+            self.coordinator.month_start_timestamp = time.time() 
+        # Inicjalizacja stanu, jeśli HA wystartował po raz pierwszy w tym miesiącu
+        elif self.coordinator.kwh_at_month_start == 0.0 and kwh > 0:
+             self.coordinator.kwh_at_month_start = kwh
+             self.coordinator.month_start_timestamp = time.time()
+
+        # 2. Obliczenia prognozy
+        current_month_kwh = kwh - self.coordinator.kwh_at_month_start
+        elapsed_days = (time.time() - self.coordinator.month_start_timestamp) / (24 * 3600)
+        
+        if elapsed_days > 0.01 and current_month_kwh > 0:
+            days_in_month = monthrange(now_dt.year, current_month)[1]
+            forecast_kwh = (current_month_kwh / elapsed_days) * days_in_month
+        
+        # Zapisz stan do atrybutów dla persystencji
+        self._attr_extra_state_attributes = {
+            "kwh_at_month_start": round(self.coordinator.kwh_at_month_start, 3),
+            "last_month_checked": self.coordinator.last_month_checked,
+            "month_start_timestamp": self.coordinator.month_start_timestamp,
+        }
+        
+        return round(forecast_kwh, 3)
