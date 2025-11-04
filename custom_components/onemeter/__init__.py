@@ -9,7 +9,7 @@ DOMAIN = "onemeter"
 async def async_setup_entry(hass, entry):
     """Konfiguruje integrację OneMeter jako wpis konfiguracyjny."""
     
-    # ✅ POPRAWKA: Używamy poprawnej funkcji async_forward_entry_setups (z literą 's' na końcu)
+    # Przekazuje konfigurację do modułu sensor.py
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     
     return True
@@ -17,10 +17,10 @@ async def async_setup_entry(hass, entry):
 async def async_unload_entry(hass, entry):
     """Usuwa integrację OneMeter."""
     
-    # Używamy async_unload_platforms
+    # Wyrejestrowuje platformy (sensory)
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     
-    # Opcjonalnie usuwamy Koordynatora z hass.data
+    # Czyści obiekt Koordynatora z pamięci (hass.data)
     if unload_ok and entry.entry_id in hass.data.get(DOMAIN, {}):
         hass.data[DOMAIN].pop(entry.entry_id)
         

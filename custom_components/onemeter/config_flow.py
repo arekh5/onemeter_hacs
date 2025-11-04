@@ -5,11 +5,11 @@ from homeassistant.core import callback
 
 DOMAIN = "onemeter"
 
-# Własne stałe konfiguracyjne (lokalna definicja w celu uniknięcia błędu importu z homeassistant.const)
+# Własne stałe konfiguracyjne (lokalna definicja dla czytelności i uniknięcia zależności)
 CONF_DEVICE_ID = "device_id" 
-CONF_MAC = "mac"             
-CONF_TOPIC = "topic"         
-CONF_TIMEOUT = "power_timeout_seconds" # Używamy nazwy klucza z sensor.py (dla spójności)
+CONF_MAC = "mac" 
+CONF_TOPIC = "topic" 
+CONF_TIMEOUT = "power_timeout_seconds"
 
 CONF_INITIAL_KWH = "initial_kwh" 
 CONF_IMPULSES_PER_KWH = "impulses_per_kwh"
@@ -39,7 +39,7 @@ STEP_METER_DATA_SCHEMA = vol.Schema(
 )
 
 class OneMeterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Handle a config flow for OneMeter (Custom)."""
+    """Obsługa przepływu konfiguracji dla OneMeter."""
 
     VERSION = 1
     temp_data = {}
@@ -47,6 +47,7 @@ class OneMeterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_user(self, user_input=None) -> FlowResult:
         """Krok identyfikacji i stanu początkowego."""
         if user_input is not None:
+            # Ustawienie unikalnego ID dla wpisu (na podstawie DEVICE_ID)
             await self.async_set_unique_id(user_input[CONF_DEVICE_ID])
             self._abort_if_unique_id_configured()
             
@@ -63,10 +64,12 @@ class OneMeterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             self.temp_data.update(user_input)
             
+            # Walidacja: Impulsy muszą być dodatnie
             if user_input.get(CONF_IMPULSES_PER_KWH) <= 0:
                 errors[CONF_IMPULSES_PER_KWH] = "invalid_impulses"
                 
             if not errors:
+                # Tworzenie ostatecznego wpisu
                 title = f"OneMeter ({self.temp_data[CONF_DEVICE_ID]})"
                 return self.async_create_entry(title=title, data=self.temp_data)
 
@@ -77,26 +80,27 @@ class OneMeterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     @staticmethod
     @callback
     def async_get_options_flow(config_entry):
+        """Rejestracja obsługi edycji opcji."""
         return OneMeterOptionsFlowHandler(config_entry)
 
 class OneMeterOptionsFlowHandler(config_entries.OptionsFlow):
     """Edycja ustawień integracji OneMeter (Options Flow)."""
 
     def __init__(self, config_entry):
-        """Inicjalizacja Options Flow."""
-        # ❌ USUNIĘTO: Przestarzałe przypisanie. Home Assistant zarządza tym wewnętrznie.
-        # self.config_entry = config_entry 
-        pass
+        """Inicjalizacja Options Flow. config_entry jest automatycznie dostępne jako self.config_entry."""
+        # Usunięto: self.config_entry = config_entry - niepotrzebne
+        pass 
 
     async def async_step_init(self, user_input=None):
         """Zarządzanie opcjami."""
         if user_input is not None:
+            # Zapis nowych opcji
             return self.async_create_entry(title="", data=user_input)
 
-        # Używamy self.config_entry dostarczonego przez klasę bazową
+        # Pobieramy bieżące dane i opcje, aby wypełnić formularz
         current = {**self.config_entry.data, **self.config_entry.options}
         
-        # Pamiętaj, że wartości initial_kwh również mogą być edytowane
+        # Schemat opcji (tylko parametry, które można edytować po instalacji)
         schema = vol.Schema({
             vol.Optional(CONF_INITIAL_KWH, default=current.get(CONF_INITIAL_KWH, 0.0)): vol.Coerce(float),
             vol.Optional(CONF_IMPULSES_PER_KWH, default=current.get(CONF_IMPULSES_PER_KWH, 1000)): vol.Coerce(int),
