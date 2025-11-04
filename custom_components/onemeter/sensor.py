@@ -36,6 +36,8 @@ class OneMeterCoordinator(DataUpdateCoordinator):
         config = {**entry.data, **entry.options}
         
         self.device_id = "om9613"
+        # MAC urządzenia OneMeter, używany do filtrowania w payloadzie GL-S10
+        self.target_mac = "E58D81019613" 
         # Temat z surowymi impulsami, na który subskrybujemy
         self.base_topic = "onemeter/s10/v1" 
         
@@ -69,10 +71,8 @@ class OneMeterCoordinator(DataUpdateCoordinator):
             update_interval=None 
         )
 
-    # 🚨 POPRAWKA v2.0.19: Pusta metoda wymagana przez DataUpdateCoordinator
     async def _async_update_data(self):
         """Metoda wymagana przez DataUpdateCoordinator, ale nieużywana (dane pochodzą z MQTT)."""
-        # Dane są aktualizowane asynchronicznie przez MQTT Callback.
         return self.data
     
     async def _async_restore_state(self, restored_kwh: float):
@@ -101,31 +101,45 @@ class OneMeterCoordinator(DataUpdateCoordinator):
             payload = json.loads(msg.payload.decode("utf-8"))
             dev_list = payload.get("dev_list", [])
             
-            if not dev_list:
-                _LOGGER.warning("Odebrano wiadomość MQTT, ale brakuje klucza 'dev_list'. Ignorowanie.")
+            # --- 1. Znajdź wpis dla docelowego urządzenia OneMeter w dev_list (FORMAT GL-S10) ---
+            onemeter_entry = next((
+                dev for dev in dev_list if dev.get("mac", "").upper() == self.target_mac.upper()
+            ), None)
+            
+            if not onemeter_entry:
+                _LOGGER.warning(f"Odebrano wiadomość MQTT, ale nie znaleziono urządzenia OneMeter ({self.target_mac}) w 'dev_list'. Ignorowanie.")
                 return
 
-            now = time.time()
+            # Timestamp jest w milisekundach (HA wymaga sekund)
+            ts_ms = onemeter_entry.get("ts")
+            
+            if not isinstance(ts_ms, int) or ts_ms == 0:
+                 _LOGGER.warning("Znaleziono urządzenie, ale klucz 'ts' jest nieprawidłowy lub brak. Ignorowanie.")
+                 return
+                 
+            # Konwersja ms na sekundy UNIX
+            now = ts_ms / 1000 
+            
+            # W formacie GL-S10 każdy odczyt to jeden impuls
             self.total_impulses += 1 
             self.last_impulse_times.append(now) 
-            _LOGGER.debug(f"📥 Otrzymano nowy impuls. Łącznie impulsów: {self.total_impulses}")
+            _LOGGER.debug(f"📥 Otrzymano nowy impuls. Łącznie impulsów: {self.total_impulses}, czas: {now}")
 
-            # --- 1. Obliczenie Mocy (Delta t) ---
+            # --- 2. Obliczenie Mocy (Delta t) ---
             power_kw = 0.0
             if len(self.last_impulse_times) == 2:
                 time_diff_t = self.last_impulse_times[1] - self.last_impulse_times[0]
                 if time_diff_t > 0:
                     power_kw = 3600 / (self.impulses_per_kwh * time_diff_t)
                     if power_kw > self.max_power_kw:
+                         # Ograniczenie do max_power_kw (bezpiecznik)
                          power_kw = self.max_power_kw
                     self.last_valid_power = power_kw
             
             self.power_history.append(self.last_valid_power)
             
-            # --- 2. Obliczenie Energii ---
+            # --- 3. Obliczenie Energii i Aktualizacja HA ---
             kwh = self.total_impulses / self.impulses_per_kwh
-            
-            # --- 3. Aktualizacja danych i powiadomienie encji HA ---
             avg_power_kw = sum(self.power_history) / len(self.power_history)
             
             self.data = {
@@ -163,8 +177,10 @@ class OneMeterCoordinator(DataUpdateCoordinator):
             except Exception as publish_e:
                  _LOGGER.error(f"❌ BŁĄD PUBLIKACJI: Nie udało się opublikować przetworzonego stanu na MQTT: {publish_e}")
             
+        except json.JSONDecodeError as e:
+            _LOGGER.error(f"❌ Błąd parsowania JSON wiadomości MQTT: {e}")
         except Exception as e:
-            _LOGGER.error(f"❌ Błąd przetwarzania wiadomości MQTT: {e}")
+            _LOGGER.error(f"❌ Błąd krytyczny przetwarzania wiadomości MQTT: {e}")
 
     async def async_added_to_hass(self) -> None:
         """Subskrypcja MQTT i ustawienie statusu urządzenia (po gotowości klienta)."""
@@ -234,7 +250,7 @@ class OneMeterCoordinator(DataUpdateCoordinator):
 # ----------------------------------------------------------------------
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities):
-    """Tworzenie encji sensorów z obsługą odzyskiwania stanu Koordynatora (v2.0.21)."""
+    """Tworzenie encji sensorów z obsługą odzyskiwania stanu Koordynatora (v2.0.22)."""
     
     coordinator = OneMeterCoordinator(hass, entry)
 
