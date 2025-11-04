@@ -13,8 +13,6 @@ class OneMeterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors = {}
 
         if user_input is not None:
-            # W OptionsFlow i ConfigFlow używamy async_create_entry(data=user_input)
-            # Home Assistant sam przeniesie to do options przy OptionsFlow
             return self.async_create_entry(title="OneMeter", data=user_input)
 
         schema = vol.Schema({
@@ -45,15 +43,16 @@ class OneMeterOptionsFlowHandler(config_entries.OptionsFlow):
     """Edycja ustawień integracji OneMeter."""
 
     def __init__(self, config_entry):
-        self.config_entry = config_entry
+        # USUNIĘTO: self.config_entry = config_entry
+        # Atrybut self.config_entry jest teraz przypisywany automatycznie.
+        pass
 
     async def async_step_init(self, user_input=None):
         if user_input is not None:
             # Zapisuje nowe opcje do self.config_entry.options
             return self.async_create_entry(title="", data=user_input)
 
-        # KLUCZOWA POPRAWKA: Łączymy data i options. Opcje nadpisują dane.
-        # W ten sposób zawsze zobaczymy ostatnie zapisane ustawienia.
+        # KLUCZOWA LOGIKA ZAPISYWANIA: Łączymy data i options, dając priorytet options
         current = {**self.config_entry.data, **self.config_entry.options}
 
         schema = vol.Schema({
