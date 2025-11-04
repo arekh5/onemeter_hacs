@@ -96,6 +96,7 @@ class OneMeterCoordinator(DataUpdateCoordinator):
             now = time.time()
             self.total_impulses += 1 
             self.last_impulse_times.append(now) 
+            _LOGGER.debug(f"📥 Otrzymano nowy impuls. Łącznie impulsów: {self.total_impulses}")
 
             # --- 1. Obliczenie Mocy (Delta t) ---
             power_kw = 0.0
@@ -123,31 +124,34 @@ class OneMeterCoordinator(DataUpdateCoordinator):
             }
             self.last_update_success = True
             self.async_set_updated_data(self.data)
+            _LOGGER.debug(f"📊 Zaktualizowano dane HA: kWh={round(kwh, 3)}, Power={round(avg_power_kw, 3)}kW")
 
-            # --- 4. KRYTYCZNA POPRAWKA (v2.0.12): Ponowna publikacja przetworzonych danych do MQTT ---
+
+            # --- 4. KRYTYCZNA POPRAWKA (v2.0.13): Ponowna publikacja przetworzonych danych do MQTT ---
             timestamp_dt = datetime.fromtimestamp(now)
             timestamp_str = timestamp_dt.strftime("%Y-%m-%d %H:%M:%S")
             
-            # Tworzymy payload w formacie wymaganym przez użytkownika/inne systemy
             mqtt_payload = {
                 "timestamp": timestamp_str,
                 "impulses": self.total_impulses,
                 "kwh": round(kwh, 3),
                 "power_kw": round(avg_power_kw, 3),
-                # Prognoza jest obliczana w encji, a nie w Koordynatorze, 
-                # więc na potrzeby MQTT ustawiamy na 0, jak w przykładzie użytkownika
                 "forecast_kwh": 0 
             }
             
             state_topic = f"onemeter/energy/{self.device_id}/state"
-            await mqtt.async_publish(
-                self.hass, 
-                state_topic, 
-                json.dumps(mqtt_payload), 
-                qos=0, 
-                retain=False
-            )
-            _LOGGER.debug(f"📤 Opublikowano przetworzony stan na temacie: {state_topic}")
+            try:
+                await mqtt.async_publish(
+                    self.hass, 
+                    state_topic, 
+                    json.dumps(mqtt_payload), 
+                    qos=0, 
+                    retain=False
+                )
+                # ZMIANA: Z DEBUG na INFO, aby było widoczne w standardowych logach
+                _LOGGER.info(f"📤 Opublikowano przetworzony stan na temacie: {state_topic}")
+            except Exception as publish_e:
+                 _LOGGER.error(f"❌ BŁĄD PUBLIKACJI: Nie udało się opublikować przetworzonego stanu na MQTT: {publish_e}")
             
         except Exception as e:
             _LOGGER.error(f"❌ Błąd przetwarzania wiadomości MQTT: {e}")
