@@ -13,18 +13,28 @@ class OneMeterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors = {}
 
         if user_input is not None:
+            # W Home Assistant Config Flow, wszystkie opcje są zapisywane w 'data',
+            # niezależnie od tego, czy są wymagane, czy opcjonalne.
             return self.async_create_entry(title="OneMeter", data=user_input)
 
+        # SCHEMAT DLA PIERWSZEJ INSTALACJI
         schema = vol.Schema({
+            # Parametry MQTT (Wymagane)
             vol.Required("mqtt_broker", default="127.0.0.1"): str,
             vol.Required("mqtt_port", default=1883): int,
             vol.Required("mqtt_user", default="mqtt"): str,
             vol.Required("mqtt_pass", default="mqtt"): str,
-            vol.Optional("window_seconds", default=60): int,
+            
+            # Parametry obliczeń (Opcjonalne)
             vol.Optional("impulses_per_kwh", default=1000): int,
             vol.Optional("max_power_kw", default=20): int,
             vol.Optional("power_update_interval", default=15): int,
             vol.Optional("power_average_window", default=5): int,
+            
+            # NOWY PARAMETR - Timeout zerujący moc
+            vol.Optional("power_timeout_seconds", default=300): int,
+            
+            # UWAGA: 'window_seconds' zostało usunięte
         })
 
         return self.async_show_form(
@@ -47,20 +57,31 @@ class OneMeterOptionsFlowHandler(config_entries.OptionsFlow):
 
     async def async_step_init(self, user_input=None):
         if user_input is not None:
+            # Aktualizujemy wpis konfiguracyjny danymi z edycji opcji
             return self.async_create_entry(title="", data=user_input)
 
+        # Pobieramy bieżące dane z konfiguracji
         current = self.config_entry.data
 
+        # SCHEMAT DLA EDYCJI OPCJI
+        # Zawsze używamy 'current.get()' dla opcji, aby odzyskać bieżące wartości
         schema = vol.Schema({
+            # Parametry MQTT
             vol.Required("mqtt_broker", default=current.get("mqtt_broker", "127.0.0.1")): str,
             vol.Required("mqtt_port", default=current.get("mqtt_port", 1883)): int,
             vol.Required("mqtt_user", default=current.get("mqtt_user", "mqtt")): str,
             vol.Required("mqtt_pass", default=current.get("mqtt_pass", "mqtt")): str,
-            vol.Optional("window_seconds", default=current.get("window_seconds", 60)): int,
+            
+            # Parametry obliczeń
             vol.Optional("impulses_per_kwh", default=current.get("impulses_per_kwh", 1000)): int,
             vol.Optional("max_power_kw", default=current.get("max_power_kw", 20)): int,
             vol.Optional("power_update_interval", default=current.get("power_update_interval", 15)): int,
             vol.Optional("power_average_window", default=current.get("power_average_window", 5)): int,
+            
+            # NOWY PARAMETR - Timeout zerujący moc
+            vol.Optional("power_timeout_seconds", default=current.get("power_timeout_seconds", 300)): int,
+            
+            # UWAGA: 'window_seconds' zostało usunięte
         })
 
         return self.async_show_form(step_id="init", data_schema=schema)
