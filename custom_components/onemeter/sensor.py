@@ -190,7 +190,6 @@ class OneMeterCoordinator(DataUpdateCoordinator):
         _LOGGER.info("🚨 ETAP 1/3: Rozpoczynanie procesu subskrypcji MQTT dla Koordynatora.")
         
         try:
-            await mqtt.async_when_ready(self.hass)
             _LOGGER.info("🚨 ETAP 2/3: Klient MQTT Home Assistanta jest GOTOWY do subskrypcji.")
 
             self.unsubscribe_mqtt = await mqtt.async_subscribe(
@@ -219,8 +218,6 @@ class OneMeterCoordinator(DataUpdateCoordinator):
         except Exception as e:
             _LOGGER.error(f"🚨 BŁĄD KRYTYCZNY SUBKSKRYPCJI: Wystąpił błąd w async_added_to_hass: {e}")
 
-        await super().async_added_to_hass()
-        
     async def async_will_remove_from_hass(self) -> None:
         """Usuwanie subskrypcji i statusu offline."""
         status_topic = f"onemeter/energy/{self.device_id}/status"
@@ -238,7 +235,10 @@ class OneMeterCoordinator(DataUpdateCoordinator):
         
         if self.unsubscribe_mqtt:
             self.unsubscribe_mqtt()
-        await super().async_will_remove_from_hass()
+            
+        # ❌ POPRAWKA BŁĘDU (v2.0.35): Usunięcie wywołania super().async_will_remove_from_hass()
+        # Ponieważ DataUpdateCoordinator tego nie implementuje lub nie jest to wymagane.
+        pass
 
 # ----------------------------------------------------------------------
 # ASYNCHRONICZNE SETUP (TWORZENIE ENCJACH)
@@ -264,11 +264,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     # 2. Inicjalizujemy Koordynatora odzyskanym stanem
     await coordinator._async_restore_state(restored_kwh)
     
-    # 🚨 KRYTYCZNA AKTYWACJA: Musimy jawnie wywołać subskrypcję MQTT.
-    # Wersja DataUpdateCoordinator nie wywołuje tego automatycznie na start.
+    # 🚨 KRYTYCZNA AKTYWACJA: Jawnie wywołujemy subskrypcję MQTT.
     await coordinator.async_added_to_hass() 
 
-    # Uruchamiamy odświeżanie danych (zwykle niepotrzebne przy MQTT, ale dobra praktyka)
+    # Uruchamiamy odświeżanie danych (wymagane przez DataUpdateCoordinator)
     await coordinator.async_config_entry_first_refresh()
     
     # 3. Dodajemy Koordynatora do HA
@@ -303,7 +302,7 @@ class OneMeterBaseSensor(SensorEntity):
             name="OneMeter",
             manufacturer="OneMeter",
             model="Energy Meter",
-            sw_version="2.0.33", # Zaktualizowany numer wersji
+            sw_version="2.0.35", # Zaktualizowany numer wersji
         )
 
     @property
