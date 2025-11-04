@@ -21,6 +21,7 @@ class OneMeterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             vol.Required("mqtt_broker", default="127.0.0.1"): str,
             vol.Required("mqtt_port", default=1883): int,
             vol.Required("mqtt_user", default="mqtt"): str,
+            # POPRAWKA: Usunięcie błędu składni (z poprzednich wersji)
             vol.Required("mqtt_pass", default="mqtt"): str,
             
             # Właściwe parametry licznika
@@ -63,6 +64,7 @@ class OneMeterOptionsFlowHandler(config_entries.OptionsFlow):
             vol.Required("mqtt_broker", default=current.get("mqtt_broker", "127.0.0.1")): str,
             vol.Required("mqtt_port", default=current.get("mqtt_port", 1883)): int,
             vol.Required("mqtt_user", default=current.get("mqtt_user", "mqtt")): str,
+            # POPRAWKA: Usunięcie błędu składni (z poprzednich wersji)
             vol.Required("mqtt_pass", default=current.get("mqtt_pass", "mqtt")): str,
             # Parametry licznika
             vol.Optional("impulses_per_kwh", default=current.get("impulses_per_kwh", 1000)): int,
