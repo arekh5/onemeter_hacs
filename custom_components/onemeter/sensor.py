@@ -22,7 +22,7 @@ from homeassistant.helpers.typing import StateType
 _LOGGER = logging.getLogger(__name__)
 
 DOMAIN = "onemeter"
-PAYLOAD_PREFIX = "v1=" # Nowa stała dla prefiksu payloadu
+PAYLOAD_PREFIX = "v1=" 
 
 # ----------------------------------------------------------------------
 # KLASA KOORDYNATORA DANYCH (ZARZĄDZA KLIENTEM MQTT)
@@ -93,13 +93,12 @@ class OneMeterCoordinator(DataUpdateCoordinator):
     async def _async_message_received(self, msg):
         """Asynchroniczna obsługa wiadomości MQTT."""
         
-        # WERYFIKACJA ODBIORU (Wymuszamy widoczność INFO)
         _LOGGER.info(f"🚨 CALLBACK OTRZYMANY. Temat: {msg.topic}, Długość Payload: {len(msg.payload)} bytes")
         
         try:
             raw_payload_str = msg.payload.decode("utf-8")
             
-            # NOWA LOGIKA: Usuwamy prefiks 'v1='
+            # KRYTYCZNA POPRAWKA: Usuwamy prefiks 'v1='
             if raw_payload_str.startswith(PAYLOAD_PREFIX):
                 json_str = raw_payload_str[len(PAYLOAD_PREFIX):]
             else:
@@ -187,7 +186,6 @@ class OneMeterCoordinator(DataUpdateCoordinator):
                  _LOGGER.error(f"❌ BŁĄD PUBLIKACJI: Nie udało się opublikować przetworzonego stanu na MQTT: {publish_e}")
             
         except json.JSONDecodeError as e:
-            # W tym miejscu teraz logujemy błąd JSON, jeśli po usunięciu prefiksu jest nadal niepoprawny
             _LOGGER.error(f"❌ Błąd parsowania JSON wiadomości MQTT (po usunięciu prefiksu): {e}")
         except Exception as e:
             _LOGGER.error(f"❌ Błąd krytyczny przetwarzania wiadomości MQTT: {e}")
@@ -249,7 +247,7 @@ class OneMeterCoordinator(DataUpdateCoordinator):
         await super().async_will_remove_from_hass()
 
 # ----------------------------------------------------------------------
-# ASYNCHRONICZNE SETUP (TWORZENIE ENCJACH - DLA POPRAWKI BŁĘDU SETUP)
+# ASYNCHRONICZNE SETUP (TWORZENIE ENCJACH)
 # ----------------------------------------------------------------------
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities):
@@ -288,21 +286,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     return True
 
 # ----------------------------------------------------------------------
-# KLASY ENCJACH (SENSORÓW)
+# KLASY ENCJACH (SENSORÓW - Z POPRAWIONYM INICJALIZATOREM)
 # ----------------------------------------------------------------------
 
 class OneMeterBaseSensor(SensorEntity):
     """Baza dla sensorów OneMeter."""
     _attr_has_entity_name = True
-    
-    # Nowa linia: Wymaga, aby klasy dziedziczące definiowały translation_key
     _attr_translation_key: str 
 
     def __init__(self, coordinator: OneMeterCoordinator):
         self.coordinator = coordinator
         
-        # Używamy translation_key, który jest zdefiniowany w klasach dziedziczących
-        # Musimy go użyć do stworzenia unikalnego ID
+        # POPRAWKA: Używamy zdefiniowanego _attr_translation_key
         self._attr_unique_id = f"{coordinator.device_id}_{self._attr_translation_key}"
         
         self._attr_device_info = DeviceInfo(
@@ -310,13 +305,13 @@ class OneMeterBaseSensor(SensorEntity):
             name="OneMeter",
             manufacturer="OneMeter",
             model="Energy Meter",
-            sw_version="2.0.29",
+            sw_version="2.0.30",
         )
 
     @property
     def available(self) -> bool:
         """Zwraca True, jeśli koordynator ma dane."""
-        # Wystarczy sprawdzić, czy Koordynator się uruchomił
+        # Sprawdzenie, czy subskrypcja jest aktywna
         return callable(self.coordinator.unsubscribe_mqtt)
 
     async def async_added_to_hass(self) -> None:
@@ -328,7 +323,6 @@ class OneMeterBaseSensor(SensorEntity):
 
 class OneMeterEnergySensor(OneMeterBaseSensor, RestoreEntity):
     """Sensor energii (kWh), który odzyskuje stan (persistence)."""
-    # Definicja atrybutów (w tym translation_key, który jest używany w BaseSensor)
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
     _attr_device_class = SensorDeviceClass.ENERGY
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
@@ -345,7 +339,6 @@ class OneMeterEnergySensor(OneMeterBaseSensor, RestoreEntity):
 
 class OneMeterPowerSensor(OneMeterBaseSensor):
     """Sensor mocy chwilowej (kW)."""
-    # Definicja atrybutów
     _attr_native_unit_of_measurement = UnitOfPower.KILO_WATT
     _attr_device_class = SensorDeviceClass.POWER
     _attr_state_class = SensorStateClass.MEASUREMENT
@@ -357,7 +350,6 @@ class OneMeterPowerSensor(OneMeterBaseSensor):
         if self.coordinator.data is not None:
             time_since_impulse = time.time() - self.coordinator.data.get("last_impulse_time", 0)
             
-            # Weryfikacja timeoutu (zerowanie mocy, jeśli zbyt długo nie ma impulsu)
             if time_since_impulse > self.coordinator.power_timeout_seconds:
                  return 0.0
                  
@@ -366,7 +358,6 @@ class OneMeterPowerSensor(OneMeterBaseSensor):
 
 class OneMeterForecastSensor(OneMeterBaseSensor, RestoreEntity):
     """Sensor prognozy miesięcznego zużycia (kWh)."""
-    # Definicja atrybutów
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
     _attr_device_class = SensorDeviceClass.ENERGY
     _attr_state_class = SensorStateClass.MEASUREMENT
@@ -380,12 +371,10 @@ class OneMeterForecastSensor(OneMeterBaseSensor, RestoreEntity):
         if self.coordinator.data is None:
             return None
             
-        # ... (Logika prognozy jest pominięta dla zwięzłości, ale musi być poprawna)
         kwh = self.coordinator.data.get("kwh", 0.0)
         now_dt = datetime.now()
         current_month = now_dt.month
         
-        # 1. Sprawdzenie zmiany miesiąca
         if current_month != self.coordinator.last_month_checked:
             _LOGGER.info(f"🔄 Zmiana miesiąca wykryta. Reset prognozy.")
             self.coordinator.kwh_at_month_start = kwh 
@@ -395,7 +384,6 @@ class OneMeterForecastSensor(OneMeterBaseSensor, RestoreEntity):
              self.coordinator.kwh_at_month_start = kwh
              self.coordinator.month_start_timestamp = time.time()
 
-        # 2. Obliczenia prognozy
         current_month_kwh = kwh - self.coordinator.kwh_at_month_start
         elapsed_days = (time.time() - self.coordinator.month_start_timestamp) / (24 * 3600)
         
@@ -403,7 +391,6 @@ class OneMeterForecastSensor(OneMeterBaseSensor, RestoreEntity):
             days_in_month = monthrange(now_dt.year, current_month)[1]
             forecast_kwh = (current_month_kwh / elapsed_days) * days_in_month
         
-        # Zapisz stan do atrybutów dla persystencji
         self._attr_extra_state_attributes = {
             "kwh_at_month_start": round(self.coordinator.kwh_at_month_start, 3),
             "last_month_checked": self.coordinator.last_month_checked,
