@@ -22,7 +22,6 @@ from homeassistant.helpers.typing import StateType
 _LOGGER = logging.getLogger(__name__)
 
 DOMAIN = "onemeter"
-PAYLOAD_PREFIX = "v1=" 
 
 # ----------------------------------------------------------------------
 # KLASA KOORDYNATORA DANYCH (ZARZĄDZA KLIENTEM MQTT)
@@ -98,13 +97,8 @@ class OneMeterCoordinator(DataUpdateCoordinator):
         try:
             raw_payload_str = msg.payload.decode("utf-8")
             
-            # KRYTYCZNA POPRAWKA: Usuwamy prefiks 'v1='
-            if raw_payload_str.startswith(PAYLOAD_PREFIX):
-                json_str = raw_payload_str[len(PAYLOAD_PREFIX):]
-            else:
-                json_str = raw_payload_str
-            
-            payload = json.loads(json_str)
+            # Bezpośrednie parsowanie JSON
+            payload = json.loads(raw_payload_str)
             
             dev_list = payload.get("dev_list", [])
             
@@ -186,10 +180,11 @@ class OneMeterCoordinator(DataUpdateCoordinator):
                  _LOGGER.error(f"❌ BŁĄD PUBLIKACJI: Nie udało się opublikować przetworzonego stanu na MQTT: {publish_e}")
             
         except json.JSONDecodeError as e:
-            _LOGGER.error(f"❌ Błąd parsowania JSON wiadomości MQTT (po usunięciu prefiksu): {e}")
+            _LOGGER.error(f"❌ Błąd parsowania JSON wiadomości MQTT: {e}")
         except Exception as e:
             _LOGGER.error(f"❌ Błąd krytyczny przetwarzania wiadomości MQTT: {e}")
 
+    # 🚨 PRZYWRÓCONA, KRYTYCZNA FUNKCJA DLA SUBKSKRYPCJI MQTT!
     async def async_added_to_hass(self) -> None:
         """Subskrypcja MQTT i ustawienie statusu urządzenia (po gotowości klienta)."""
         
@@ -305,7 +300,7 @@ class OneMeterBaseSensor(SensorEntity):
             name="OneMeter",
             manufacturer="OneMeter",
             model="Energy Meter",
-            sw_version="2.0.30",
+            sw_version="2.0.31", # Zaktualizowany numer wersji
         )
 
     @property
