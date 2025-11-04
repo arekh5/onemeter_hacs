@@ -220,14 +220,13 @@ class OneMeterCoordinator(DataUpdateCoordinator):
 # ----------------------------------------------------------------------
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities):
-    """Tworzenie encji sensorów z obsługą odzyskiwania stanu Koordynatora (v2.0.16)."""
+    """Tworzenie encji sensorów z obsługą odzyskiwania stanu Koordynatora (v2.0.18)."""
     
     coordinator = OneMeterCoordinator(hass, entry)
 
-    # 1. POPRAWKA: Odzyskujemy stan kWh BEZ tworzenia tymczasowej encji
+    # 1. Odzyskujemy stan kWh 
+    # ... (kod odzyskiwania stanu pozostaje bez zmian)
     entity_id_to_restore = f"sensor.{coordinator.device_id}_energy_kwh"
-    
-    # Pobieranie ostatniego znanego stanu bezpośrednio z serwisu stanów HA
     last_state = hass.states.get(entity_id_to_restore)
     
     restored_kwh = 0.0
@@ -241,16 +240,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     # 2. Inicjalizujemy Koordynatora odzyskanym stanem
     await coordinator._async_restore_state(restored_kwh)
     
-    # 3. Dodajemy Koordynatora do HA
+    # 3. DODANIE KRYTYCZNEJ LINII KODU (Wymuszenie uruchomienia subskrypcji MQTT)
+    # Ta linia gwarantuje, że async_added_to_hass Koordynatora zostanie wywołane,
+    # co rozpocznie subskrypcję i logowanie "🚨 ETAP 1/3".
+    await coordinator.async_config_entry_first_refresh() # <-- DODAJ TĘ LINIĘ
+    
+    # 4. Dodajemy Koordynatora do HA
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
 
-    # 4. Dodajemy Encje (teraz już z zainicjalizowanymi danymi)
+    # 5. Dodajemy Encje
     async_add_entities([
         OneMeterEnergySensor(coordinator),
         OneMeterPowerSensor(coordinator),
         OneMeterForecastSensor(coordinator),
     ])
-
+    
+    # Musimy zwrócić True (dla prawidłowego forwardowania, które robi __init__.py)
+    return True
 
 # ----------------------------------------------------------------------
 # KLASY ENCJACH (SENSORÓW)
