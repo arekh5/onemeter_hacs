@@ -73,8 +73,8 @@ class OneMeterCoordinator(DataUpdateCoordinator):
 
     # 💡 POPRAWKA BŁĘDU v2.0.37: Dodanie brakującej metody
     def async_remove_listener(self, update_callback: callback) -> None:
-        """Usuwa słuchacza."""
-        self.async_remove_listener(update_callback)
+        """Usuwa słuchacza, przekazując wywołanie do klasy bazowej (DataUpdateCoordinator)."""
+        super().async_remove_listener(update_callback)
 
     async def _async_update_data(self):
         """Metoda wymagana przez DataUpdateCoordinator, ale nieużywana (dane pochodzą z MQTT)."""
@@ -312,7 +312,7 @@ class OneMeterBaseSensor(SensorEntity):
             name="OneMeter",
             manufacturer="OneMeter",
             model="Energy Meter",
-            sw_version="2.0.37", # Zaktualizowany numer wersji
+            sw_version="2.0.38", # Zaktualizowany numer wersji
         )
 
     @property
@@ -365,13 +365,14 @@ class OneMeterPowerSensor(OneMeterBaseSensor):
 
 class OneMeterForecastSensor(OneMeterBaseSensor, RestoreEntity):
     """Sensor prognozy miesięcznego zużycia (kWh)."""
-    # 💡 POPRAWKA BŁĘDU v2.0.37: Zmieniamy klucz i ustawiamy nazwę (nadpisuje tłumaczenie)
-    _attr_translation_key = "monthly_forecast_kwh" 
-    _attr_name = "Prognoza miesięczna"
     
+    # ❌ Usunięto: _attr_device_class = SensorDeviceClass.ENERGY
+    # 💡 POPRAWKA BŁĘDU v2.0.38: Usunięcie device_class. Pozostawienie measurement jest teraz prawidłowe.
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
-    _attr_device_class = SensorDeviceClass.ENERGY
     _attr_state_class = SensorStateClass.MEASUREMENT
+    
+    _attr_translation_key = "monthly_forecast_kwh" 
+    _attr_name = "Prognoza miesięczna" # Zapewnia prawidłową nazwę
 
     @property
     def native_value(self) -> StateType:
