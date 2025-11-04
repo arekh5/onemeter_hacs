@@ -63,8 +63,13 @@ class OneMeterCoordinator(DataUpdateCoordinator):
             hass,
             _LOGGER,
             name=DOMAIN,
+            # Koordynator jest Event-Driven, nie potrzebuje interwału
             update_interval=None 
         )
+
+    # W integratorach Event-Driven nie implementujemy _async_update_data, 
+    # ponieważ aktualizacja odbywa się przez async_set_updated_data w callbacku MQTT.
+    # W ten sposób unikamy błędu NotImplementedError.
 
     @callback
     async def _async_message_received(self, msg):
@@ -159,10 +164,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     
     coordinator = OneMeterCoordinator(hass, entry)
 
-    # Wymagane, aby Koordynator rozpoczął subskrypcję MQTT i inne operacje startowe
-    # oraz aby jego stan był gotowy przed tworzeniem encji.
-    await coordinator.async_config_entry_first_refresh() 
-
+    # POPRAWKA BŁĘDU (v2.0.10): Usunięto wywołanie async_config_entry_first_refresh().
+    # Ponieważ jest to koordynator event-driven, nie musi on wymuszać odświeżania,
+    # co powodowało błąd NotImplementedError.
+    
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
 
     async_add_entities([
@@ -195,13 +200,12 @@ class OneMeterBaseSensor(RestoreEntity):
         # Rejestracja słuchacza w Koordynatorze
         self.coordinator.async_add_listener(self.async_write_ha_state)
         
-    # POPRAWKA BŁĘDU (v2.0.9): Usunięto async_will_remove_from_hass z encji,
-    # aby uniknąć kolizji z wbudowaną obsługą słuchaczy DataUpdateCoordinator.
-    # Usunięcie słuchacza jest teraz obsługiwane przez DataUpdateCoordinator.
+    # Usunięcie słuchacza jest automatycznie obsługiwane przez DataUpdateCoordinator.
 
     @property
     def available(self) -> bool:
         """Sprawdza, czy koordynator jest dostępny (ma dane)."""
+        # Użycie self.coordinator.last_update_success jest ważne dla Event-Driven.
         return self.coordinator.data is not None and self.coordinator.last_update_success
 
 
@@ -287,9 +291,6 @@ class OneMeterForecastSensor(OneMeterBaseSensor):
                     _LOGGER.info(f"✅ Prognoza: Odzyskano stan: {kwh_start} kWh z miesiąca {last_month}.")
                 except ValueError:
                     _LOGGER.warning("Nieprawidłowe wartości w zapisanym stanie prognozy.")
-        
-        # Słuchacz już dodany w OneMeterBaseSensor.async_added_to_hass
-        
 
     @property
     def native_value(self) -> StateType:
