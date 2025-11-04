@@ -75,7 +75,8 @@ class OneMeterCoordinator(DataUpdateCoordinator):
         self.data = None
         self.last_update_success = False
         
-        super().__coordinator__(
+        # ✅ POPRAWKA: Zmieniono super().__coordinator__ na super().__init__
+        super().__init__(
             hass,
             _LOGGER,
             name=DOMAIN,
@@ -95,7 +96,6 @@ class OneMeterCoordinator(DataUpdateCoordinator):
         self.total_impulses = int(restored_kwh * self.impulses_per_kwh)
         _LOGGER.info(f"✅ Koordynator: Ustawiono stan początkowy/odzyskany: {restored_kwh} kWh.") 
         
-        # Ustawiamy stan początkowy dla prognozy
         self.kwh_at_month_start = restored_kwh
         
         self.data = {
@@ -158,17 +158,16 @@ class OneMeterCoordinator(DataUpdateCoordinator):
             kwh = self.total_impulses / self.impulses_per_kwh
             avg_power_kw = sum(self.power_history) / len(self.power_history)
             
-            # 💡 POPRAWIONA LOGIKA RESETU/SYNCHRONIZACJI MIESIĘCZNEJ
-            now_dt = datetime.fromtimestamp(now) # Używamy timestampu z MQTT
+            # 💡 POPRAWIONA LOGIKA RESETU/SYNCHRONIZACJI MIESIĘCZNEJ (Z v2.0.48)
+            now_dt = datetime.fromtimestamp(now) 
             current_month = now_dt.month
             
             if current_month != self.last_month_checked:
                 _LOGGER.info(f"🔄 Zmiana miesiąca wykryta. Reset prognozy na {kwh} kWh.")
                 self.kwh_at_month_start = kwh
                 self.last_month_checked = current_month
-                self.month_start_timestamp = now # Używamy timestampu impulsu jako punktu startowego
+                self.month_start_timestamp = now 
             elif self.kwh_at_month_start == 0.0 and kwh > 0:
-                 # ✅ Poprawka: Ustawienie stanu początkowego przy pierwszym impulcie po restarcie HA
                  _LOGGER.info(f"🔄 Pierwszy impuls po restarcie/instalacji. Ustawienie prognozy na {kwh} kWh.")
                  self.kwh_at_month_start = kwh
                  self.month_start_timestamp = now
@@ -228,7 +227,7 @@ class OneMeterCoordinator(DataUpdateCoordinator):
 
     async def async_added_to_hass(self) -> None:
         """Subskrypcja MQTT i ustawienie statusu urządzenia (po gotowości klienta)."""
-        # ... (kod pozostaje bez zmian)
+        
         _LOGGER.info("🚨 Inicjowanie subskrypcji MQTT dla Koordynatora.")
         
         try:
@@ -245,6 +244,7 @@ class OneMeterCoordinator(DataUpdateCoordinator):
             else:
                  _LOGGER.error(f"❌ Subskrypcja tematu {self.base_topic} NIEUDANA.")
 
+            # Publikacja statusu (zawsze retain=True)
             status_topic = f"onemeter/energy/{self.device_id}/status"
             await mqtt.async_publish(
                 self.hass, 
@@ -260,9 +260,9 @@ class OneMeterCoordinator(DataUpdateCoordinator):
 
     async def async_will_remove_from_hass(self) -> None:
         """Usuwanie subskrypcji i statusu offline (LWT)."""
-        # ... (kod pozostaje bez zmian)
         status_topic = f"onemeter/energy/{self.device_id}/status"
         try:
+            # Publikacja statusu offline (zawsze retain=True)
             await mqtt.async_publish(
                 self.hass, 
                 status_topic, 
@@ -284,9 +284,11 @@ class OneMeterCoordinator(DataUpdateCoordinator):
 # ----------------------------------------------------------------------
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities):
-    # ... (kod pozostaje bez zmian)
+    """Tworzenie encji sensorów z obsługą odzyskiwania stanu Koordynatora."""
+    
     coordinator = OneMeterCoordinator(hass, entry)
 
+    # 1. Odzyskujemy stan kWh 
     entity_id_to_restore = f"sensor.{coordinator.device_id}_energy_kwh"
     last_state = hass.states.get(entity_id_to_restore)
     
@@ -299,6 +301,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         except ValueError:
             _LOGGER.warning(f"Nie udało się odzyskać stanu: Nieprawidłowa wartość '{last_state.state}'. Używam wartości z konfiguracji: {restored_kwh} kWh.")
 
+    # 2. Inicjalizujemy Koordynatora odzyskanym stanem
     await coordinator._async_restore_state(restored_kwh)
     
     await coordinator.async_added_to_hass() 
@@ -306,6 +309,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
 
+    # 4. Dodajemy Encje
     async_add_entities([
         OneMeterEnergySensor(coordinator),
         OneMeterPowerSensor(coordinator),
@@ -333,7 +337,7 @@ class OneMeterBaseSensor(SensorEntity):
             name="OneMeter",
             manufacturer="OneMeter",
             model="Energy Meter",
-            sw_version="2.0.48", # Zaktualizowany numer wersji
+            sw_version="2.0.48", # Wersja końcowa
         )
 
     @property
