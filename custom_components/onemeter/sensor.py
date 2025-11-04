@@ -3,6 +3,7 @@ import time
 import logging
 from datetime import datetime
 from collections import deque
+from calendar import monthrange # NOWY IMPORT DLA LICZBY DNI W MIESIĄCU
 import paho.mqtt.client as mqtt
 
 _LOGGER = logging.getLogger(__name__)
@@ -19,18 +20,22 @@ class OneMeterSensor:
         self.last_message_time = 0
         self.last_impulse_times = deque(maxlen=2)
         
-        # --- Parametry mocy chwilowej (k, timeout, max) ---
+        # --- Parametry mocy chwilowej (z szybszymi domyślnymi) ---
         self.impulses_per_kwh = self.mqtt_config.get("impulses_per_kwh", 1000)
         self.max_power_kw = self.mqtt_config.get("max_power_kw", 20.0)
-        self.power_update_interval = self.mqtt_config.get("power_update_interval", 5) # ZMIENIONE Z 15 NA 5
-
-        # --- Logika ostatniej znanej mocy / zerowania ---
+        self.power_update_interval = self.mqtt_config.get("power_update_interval", 5) # Domyślnie 5s
         self.last_valid_power = 0.0
         self.power_timeout_seconds = self.mqtt_config.get("power_timeout_seconds", 300) 
 
         # --- Bufor do wygładzenia mocy chwilowej ---
-        self.power_history = deque(maxlen=self.mqtt_config.get("power_average_window", 2)) # ZMIENIONE Z 5 NA 2
+        self.power_history = deque(maxlen=self.mqtt_config.get("power_average_window", 2)) # Domyślnie 2
         self.last_power_publish = 0
+        
+        # --- Prognoza miesięczna (NOWE ZMIENNE) ---
+        self.kwh_at_month_start = 0.0
+        self.last_month_checked = datetime.now().month
+        self.month_start_timestamp = time.time() 
+
         self.client = None
         
     def start(self):
@@ -79,7 +84,7 @@ class OneMeterSensor:
             _LOGGER.error(f"❌ Błąd połączenia MQTT (kod {rc})")
 
     def publish_discovery(self):
-        """Publikacja MQTT discovery dla Home Assistant"""
+        """Publikacja MQTT discovery dla Home Assistant (Z NOWĄ ENCJĄ PROGNOZY)"""
         base_topic = "homeassistant/sensor/onemeter"
         device_info = {
             "identifiers": [f"onemeter_{self.device_id}"],
@@ -109,6 +114,18 @@ class OneMeterSensor:
                 "state_class": "measurement",
                 "device": device_info,
             },
+            # NOWY SENSOR PROGNOZY
+            {
+                "name": "OneMeter Monthly Forecast", 
+                "unique_id": f"{self.device_id}_forecast_kwh",
+                "state_topic": f"onemeter/energy/{self.device_id}/state",
+                "unit_of_measurement": "kWh",
+                "device_class": "energy",
+                "value_template": "{{ value_json.forecast_kwh }}",
+                "state_class": "measurement",
+                "device": device_info,
+                "icon": "mdi:chart-line",
+            },
             {
                 "name": "OneMeter Timestamp",
                 "unique_id": f"{self.device_id}_timestamp",
@@ -125,7 +142,7 @@ class OneMeterSensor:
             _LOGGER.info(f"📡 Zarejestrowano sensor HA: {sensor['name']}")
 
     def on_message(self, client, userdata, msg):
-        """Obsługa wiadomości MQTT z impulsami (Finalna wersja z Delta t)"""
+        """Obsługa wiadomości MQTT z impulsami (Finalna wersja z Delta t i prognozą)"""
         try:
             payload = json.loads(msg.payload.decode("utf-8"))
             dev_list = payload.get("dev_list", [])
@@ -161,6 +178,38 @@ class OneMeterSensor:
                 power_kw = self.max_power_kw
                 self.last_valid_power = power_kw
                 
+            # --- Energia całkowita ---
+            kwh = self.total_impulses / self.impulses_per_kwh
+
+            # --- Logika Prognozy Miesięcznej ---
+            forecast_kwh = 0.0
+            now_dt = datetime.now()
+            current_month = now_dt.month
+            
+            # 1. Sprawdzenie zmiany miesiąca
+            if current_month != self.last_month_checked:
+                _LOGGER.info(f"🔄 Zmiana miesiąca wykryta. Reset prognozy.")
+                self.kwh_at_month_start = kwh # Ustawienie wartości początkowej
+                self.last_month_checked = current_month
+                self.month_start_timestamp = now # Reset czasu startu
+            elif self.kwh_at_month_start == 0.0:
+                 # Inicjalizacja wartości początkowej przy starcie integracji
+                 self.kwh_at_month_start = kwh
+                 self.month_start_timestamp = now
+
+            # 2. Obliczenia prognozy
+            current_month_kwh = kwh - self.kwh_at_month_start
+            elapsed_days = (now - self.month_start_timestamp) / (24 * 3600)
+            
+            if elapsed_days > 0.01 and current_month_kwh > 0: 
+                # Prognoza jest liczona tylko jeśli minął ułamek dnia i jest zużycie
+                
+                # Liczba dni w bieżącym miesiącu (np. 31 dla października)
+                days_in_month = monthrange(now_dt.year, current_month)[1]
+                
+                # Prognoza: (Zużycie_miesiąca / Dni_upłynęły) * Dni_w_miesiącu
+                forecast_kwh = (current_month_kwh / elapsed_days) * days_in_month
+            
             # --- Publikacja co power_update_interval ---
             if now - self.last_power_publish >= self.power_update_interval:
                 
@@ -177,14 +226,14 @@ class OneMeterSensor:
                 
                 # --- Właściwa Publikacja MQTT ---
                 self.last_power_publish = now
-                kwh = self.total_impulses / self.impulses_per_kwh
                 timestamp_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 
                 mqtt_payload = {
                     "timestamp": timestamp_str,
                     "impulses": self.total_impulses,
                     "kwh": round(kwh, 3),
-                    "power_kw": round(power_to_publish, 3) 
+                    "power_kw": round(power_to_publish, 3),
+                    "forecast_kwh": round(forecast_kwh, 3), # NOWY ELEMENT
                 }
                 client.publish(f"onemeter/energy/{self.device_id}/state", json.dumps(mqtt_payload), qos=1, retain=True)
                 _LOGGER.info(f"📈 Energy update: {mqtt_payload}")
