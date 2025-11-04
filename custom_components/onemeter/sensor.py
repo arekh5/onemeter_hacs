@@ -4,6 +4,7 @@ import logging
 from datetime import datetime
 from collections import deque
 from calendar import monthrange 
+from datetime import timedelta # Importujemy timedelta
 
 from homeassistant.components.sensor import (
     SensorEntity,
@@ -50,9 +51,6 @@ class OneMeterCoordinator(DataUpdateCoordinator):
         self.target_mac = config.get(CONF_MAC, "E58D81019613") 
         self.base_topic = config.get(CONF_TOPIC, "onemeter/s10/v1") 
         
-        # --- Stan MQTT ---
-        self.unsubscribe_mqtt = None
-
         # --- Stan Licznika (odzyskiwany na starcie) ---
         self.total_impulses = 0 
         self.last_impulse_times = deque(maxlen=2) 
@@ -63,24 +61,25 @@ class OneMeterCoordinator(DataUpdateCoordinator):
         self.max_power_kw = config.get(CONF_MAX_POWER_KW, 20.0)
         self.power_timeout_seconds = config.get(CONF_TIMEOUT, 300)
         self.power_history = deque(maxlen=config.get(CONF_POWER_AVERAGE_WINDOW, 2))
-        
         self.initial_kwh_setting = config.get(CONF_INITIAL_KWH, 0.0)
 
-        # --- Zapisywany Stan Prognozy (Persystencja) ---
+        # --- Stan Prognozy (Persystencja/Obliczenia) ---
         self.kwh_at_month_start = 0.0
         self.last_month_checked = datetime.now().month
         self.month_start_timestamp = time.time()
+        self.latest_forecast_kwh = 0.0 # 💡 NOWA ZMIENNA: Ostatnia obliczona prognoza
         
         # Inicjalizacja danych na start
         self.data = None
         self.last_update_success = False
+        self.unsubscribe_mqtt = None
         
-        # ✅ POPRAWKA: Zmieniono super().__coordinator__ na super().__init__
+        # ✅ ZMIANA: Ustawienie interwału odświeżania na 1 godzinę dla prognozy
         super().__init__(
             hass,
             _LOGGER,
             name=DOMAIN,
-            update_interval=None 
+            update_interval=timedelta(hours=1) # 💡 USTAWIANIE CZĘSTOTLIWOŚCI AKTUALIZACJI PROGNOZY
         )
 
     def async_remove_listener(self, update_callback: callback) -> None:
@@ -88,13 +87,43 @@ class OneMeterCoordinator(DataUpdateCoordinator):
         super().async_remove_listener(update_callback)
 
     async def _async_update_data(self):
-        """Metoda wymagana przez DataUpdateCoordinator."""
-        return self.data
-    
+        """Metoda wywoływana przez Koordynatora co interwał (co 1h). Oblicza PROGNOZĘ."""
+        
+        # Obliczenie prognozy następuje tylko co interwał!
+        if self.data is not None:
+             self.latest_forecast_kwh = self._calculate_forecast(
+                self.data.get("kwh", 0.0), # Używamy bieżącej KWH z danych
+                self.data.get("last_impulse_time", time.time()) # Używamy timestampu impulsu
+             )
+        
+        # Zwracamy istniejące dane, tylko prognoza się zmieniła wewnętrznie
+        return self.data 
+
+    def _calculate_forecast(self, current_kwh: float, last_impulse_time: float) -> float:
+        """Wydzielona logika obliczania prognozy miesięcznej."""
+        
+        forecast_kwh = 0.0
+        current_month_kwh = current_kwh - self.kwh_at_month_start
+        
+        now = last_impulse_time
+        now_dt = datetime.fromtimestamp(now)
+        
+        elapsed_seconds = now - self.month_start_timestamp
+        
+        if elapsed_seconds > 60 and current_month_kwh > 0 and now_dt.month == self.last_month_checked:
+            elapsed_days = elapsed_seconds / (24 * 3600)
+            days_in_month = monthrange(now_dt.year, now_dt.month)[1]
+            
+            if elapsed_days > 0:
+                forecast_kwh = (current_month_kwh / elapsed_days) * days_in_month
+                
+        return round(forecast_kwh, 3)
+
+
     async def _async_restore_state(self, restored_kwh: float):
-        """Ustawia stan początkowy Koordynatora na podstawie odzyskanego kWh z encji."""
+        """Ustawia stan początkowy Koordynatora na podstawie odzyskanego kWh z encji KWH."""
         self.total_impulses = int(restored_kwh * self.impulses_per_kwh)
-        _LOGGER.info(f"✅ Koordynator: Ustawiono stan początkowy/odzyskany: {restored_kwh} kWh.") 
+        _LOGGER.info(f"✅ Koordynator: Ustawiono stan początkowy/odzyskany kWh: {restored_kwh} kWh.") 
         
         self.kwh_at_month_start = restored_kwh
         
@@ -106,11 +135,32 @@ class OneMeterCoordinator(DataUpdateCoordinator):
         }
         self.last_update_success = True
 
+    def set_forecast_state(self, restored_attrs: dict, restored_value: float):
+        """Ustawia atrybuty prognozy na podstawie odzyskanych atrybutów sensora prognozy."""
+        if not restored_attrs:
+            _LOGGER.debug("Brak atrybutów do odzyskania dla Prognozy. Używam domyślnych.")
+            return
+
+        kwh_start = restored_attrs.get("kwh_at_month_start")
+        ts_start = restored_attrs.get("month_start_timestamp")
+        
+        if kwh_start is not None and ts_start is not None:
+            self.kwh_at_month_start = float(kwh_start)
+            self.month_start_timestamp = float(ts_start)
+            self.latest_forecast_kwh = float(restored_value) # Ustawiamy odzyskaną wartość prognozy
+            
+            start_dt = datetime.fromtimestamp(self.month_start_timestamp)
+            self.last_month_checked = start_dt.month
+            
+            _LOGGER.info(f"✅ Prognoza: Odzyskano stan miesięczny z atrybutów. Start kWh: {self.kwh_at_month_start}, Czas: {start_dt}")
+
+
     @callback
     async def _async_message_received(self, msg):
         """Asynchroniczna obsługa wiadomości MQTT."""
         
         try:
+            # ... (Logika przetwarzania MQTT i obliczania mocy/energii pozostaje bez zmian) ...
             if isinstance(msg.payload, bytes):
                 raw_payload_str = msg.payload.decode("utf-8")
             elif isinstance(msg.payload, str):
@@ -158,7 +208,7 @@ class OneMeterCoordinator(DataUpdateCoordinator):
             kwh = self.total_impulses / self.impulses_per_kwh
             avg_power_kw = sum(self.power_history) / len(self.power_history)
             
-            # 💡 POPRAWIONA LOGIKA RESETU/SYNCHRONIZACJI MIESIĘCZNEJ (Z v2.0.48)
+            # 💡 LOGIKA RESETU/SYNCHRONIZACJI MIESIĘCZNEJ (KONIECZNA PRZY KAŻDYM IMPULSIE)
             now_dt = datetime.fromtimestamp(now) 
             current_month = now_dt.month
             
@@ -172,21 +222,7 @@ class OneMeterCoordinator(DataUpdateCoordinator):
                  self.kwh_at_month_start = kwh
                  self.month_start_timestamp = now
                  
-            # 💡 OBLICZENIE PROGNOZY
-            forecast_kwh = 0.0
-            current_month_kwh = kwh - self.kwh_at_month_start
-            
-            # Używamy timestampu impulsu jako aktualnego czasu
-            elapsed_seconds = now - self.month_start_timestamp
-            
-            if elapsed_seconds > 60 and current_month_kwh > 0 and now_dt.month == self.last_month_checked:
-                elapsed_days = elapsed_seconds / (24 * 3600)
-                days_in_month = monthrange(now_dt.year, now_dt.month)[1]
-                
-                if elapsed_days > 0:
-                    forecast_kwh = (current_month_kwh / elapsed_days) * days_in_month
-
-            # --- 4. Aktualizacja danych Koordynatora ---
+            # --- 4. Aktualizacja danych Koordynatora (bez prognozy) ---
             self.data = {
                 "power_kw": avg_power_kw,
                 "kwh": kwh,
@@ -194,18 +230,20 @@ class OneMeterCoordinator(DataUpdateCoordinator):
                 "last_impulse_kw": self.last_valid_power,
             }
             self.last_update_success = True
-            self.async_set_updated_data(self.data)
-
+            
+            # 💡 TYLKO INFORMACJA O ZMIANIE DANYCH (MOCY/ENERGII)
+            self.async_set_updated_data(self.data) 
+            
             # --- 5. Ponowna publikacja przetworzonych danych do MQTT ---
             timestamp_dt = datetime.fromtimestamp(now)
             timestamp_str = timestamp_dt.strftime("%Y-%m-%d %H:%M:%S")
             
+            # 💡 WYSYŁAMY DO MQTT TYLKO KWH I MOC (BEZ PROGNOZY)
             mqtt_payload = {
                 "timestamp": timestamp_str,
                 "impulses": self.total_impulses,
                 "kwh": round(kwh, 3),
                 "power_kw": round(avg_power_kw, 3),
-                "forecast_kwh": round(forecast_kwh, 3) 
             }
             
             state_topic = f"onemeter/energy/{self.device_id}/state"
@@ -227,7 +265,7 @@ class OneMeterCoordinator(DataUpdateCoordinator):
 
     async def async_added_to_hass(self) -> None:
         """Subskrypcja MQTT i ustawienie statusu urządzenia (po gotowości klienta)."""
-        
+        # ... (kod pozostaje bez zmian)
         _LOGGER.info("🚨 Inicjowanie subskrypcji MQTT dla Koordynatora.")
         
         try:
@@ -244,7 +282,6 @@ class OneMeterCoordinator(DataUpdateCoordinator):
             else:
                  _LOGGER.error(f"❌ Subskrypcja tematu {self.base_topic} NIEUDANA.")
 
-            # Publikacja statusu (zawsze retain=True)
             status_topic = f"onemeter/energy/{self.device_id}/status"
             await mqtt.async_publish(
                 self.hass, 
@@ -260,9 +297,9 @@ class OneMeterCoordinator(DataUpdateCoordinator):
 
     async def async_will_remove_from_hass(self) -> None:
         """Usuwanie subskrypcji i statusu offline (LWT)."""
+        # ... (kod pozostaje bez zmian)
         status_topic = f"onemeter/energy/{self.device_id}/status"
         try:
-            # Publikacja statusu offline (zawsze retain=True)
             await mqtt.async_publish(
                 self.hass, 
                 status_topic, 
@@ -288,32 +325,42 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     
     coordinator = OneMeterCoordinator(hass, entry)
 
-    # 1. Odzyskujemy stan kWh 
-    entity_id_to_restore = f"sensor.{coordinator.device_id}_energy_kwh"
-    last_state = hass.states.get(entity_id_to_restore)
+    # 1. Odzyskujemy stan kWh (głównego licznika)
+    entity_id_to_restore_kwh = f"sensor.{coordinator.device_id}_energy_kwh"
+    last_state_kwh = hass.states.get(entity_id_to_restore_kwh)
     
     restored_kwh = float(coordinator.initial_kwh_setting)
     
-    if last_state and last_state.state:
+    if last_state_kwh and last_state_kwh.state:
         try:
-            restored_kwh = float(last_state.state)
-            _LOGGER.info(f"✅ Odzyskano ostatni stan sensora {entity_id_to_restore}: {restored_kwh} kWh.")
+            restored_kwh = float(last_state_kwh.state)
+            _LOGGER.info(f"✅ Odzyskano ostatni stan sensora {entity_id_to_restore_kwh}: {restored_kwh} kWh.")
         except ValueError:
-            _LOGGER.warning(f"Nie udało się odzyskać stanu: Nieprawidłowa wartość '{last_state.state}'. Używam wartości z konfiguracji: {restored_kwh} kWh.")
+            _LOGGER.warning(f"Nie udało się odzyskać stanu: Nieprawidłowa wartość '{last_state_kwh.state}'. Używam wartości z konfiguracji: {restored_kwh} kWh.")
 
-    # 2. Inicjalizujemy Koordynatora odzyskanym stanem
     await coordinator._async_restore_state(restored_kwh)
     
+    # 2. Odzyskujemy stan Prognozy (i jej atrybuty)
+    entity_id_to_restore_forecast = f"sensor.{coordinator.device_id}_monthly_forecast_kwh"
+    last_state_forecast = hass.states.get(entity_id_to_restore_forecast)
+    
+    if last_state_forecast and last_state_forecast.state:
+        try:
+             restored_value = float(last_state_forecast.state)
+             # Używamy odzyskanych atrybutów do ustawienia stanu startowego prognozy w Koordynatorze
+             coordinator.set_forecast_state(last_state_forecast.attributes, restored_value)
+        except (ValueError, TypeError):
+             _LOGGER.warning("Nie udało się odzyskać ostatniej wartości Prognozy lub jej atrybutów. Używam domyślnych/obecnych.")
+
     await coordinator.async_added_to_hass() 
     await coordinator.async_config_entry_first_refresh()
     
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
 
-    # 4. Dodajemy Encje
     async_add_entities([
         OneMeterEnergySensor(coordinator),
         OneMeterPowerSensor(coordinator),
-        OneMeterForecastSensor(coordinator),
+        OneMeterForecastSensor(coordinator), 
     ])
     
     return True
@@ -337,7 +384,7 @@ class OneMeterBaseSensor(SensorEntity):
             name="OneMeter",
             manufacturer="OneMeter",
             model="Energy Meter",
-            sw_version="2.0.48", # Wersja końcowa
+            sw_version="2.0.50", # Zmieniamy numer wersji
         )
 
     @property
@@ -350,26 +397,26 @@ class OneMeterBaseSensor(SensorEntity):
         self.async_on_remove(
             self.coordinator.async_add_listener(self.async_write_ha_state)
         )
-        await super().async_added_to_hass()
+        if not isinstance(self, RestoreEntity):
+             await super().async_added_to_hass()
 
+# ... (OneMeterEnergySensor i OneMeterPowerSensor pozostają bez zmian) ...
 class OneMeterEnergySensor(OneMeterBaseSensor, RestoreEntity):
-    """Sensor energii (kWh), który odzyskuje stan (persistence)."""
+    # ... (kod)
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
     _attr_device_class = SensorDeviceClass.ENERGY
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
     _attr_translation_key = "energy_kwh" 
-    
     _attr_extra_state_attributes = {}
 
     @property
     def native_value(self) -> StateType:
-        """Zwraca obecną wartość energii w kWh."""
         if self.coordinator.data is not None:
             return round(self.coordinator.data.get("kwh", 0.0), 3)
         return None
 
 class OneMeterPowerSensor(OneMeterBaseSensor):
-    """Sensor mocy chwilowej (kW)."""
+    # ... (kod)
     _attr_native_unit_of_measurement = UnitOfPower.KILO_WATT
     _attr_device_class = SensorDeviceClass.POWER
     _attr_state_class = SensorStateClass.MEASUREMENT
@@ -377,7 +424,6 @@ class OneMeterPowerSensor(OneMeterBaseSensor):
 
     @property
     def native_value(self) -> StateType:
-        """Zwraca obecną wartość mocy w kW."""
         if self.coordinator.data is not None:
             time_since_impulse = time.time() - self.coordinator.data.get("last_impulse_time", 0)
             
@@ -388,48 +434,44 @@ class OneMeterPowerSensor(OneMeterBaseSensor):
         return None
 
 class OneMeterForecastSensor(OneMeterBaseSensor, RestoreEntity):
-    """Sensor prognozy miesięcznego zużycia (kWh)."""
+    """Sensor prognozy miesięcznego zużycia (kWh), aktualizowany co interwał."""
     _attr_translation_key = "monthly_forecast_kwh" 
     _attr_name = "Prognoza miesięczna"
     
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
     _attr_state_class = SensorStateClass.MEASUREMENT
 
+    async def async_added_to_hass(self) -> None:
+        """Wywołane, gdy encja jest dodawana do Home Assistant."""
+        
+        last_state = await self.async_get_last_state()
+        
+        if last_state is not None:
+             try:
+                 restored_value = float(last_state.state)
+                 self.coordinator.set_forecast_state(last_state.attributes, restored_value)
+
+             except (ValueError, TypeError):
+                 _LOGGER.warning("Nie udało się odzyskać ostatniej wartości Prognozy lub jej atrybutów. Używam domyślnych/obecnych.")
+                 
+        self.async_on_remove(
+            self.coordinator.async_add_listener(self.async_write_ha_state)
+        )
+        
+        await super(OneMeterBaseSensor, self).async_added_to_hass()
+
+
     @property
     def native_value(self) -> StateType:
-        """Oblicza i zwraca prognozę."""
+        """Zwraca obecną wartość prognozy z Koordynatora (obliczoną co interwał)."""
         
-        if self.coordinator.data is None:
-            return None
+        # Pobieramy wartość z Koordynatora, która jest aktualizowana co 1h
+        forecast_kwh = self.coordinator.latest_forecast_kwh 
             
-        kwh = self.coordinator.data.get("kwh", 0.0)
-        
-        kwh_at_month_start = self.coordinator.kwh_at_month_start
-        month_start_timestamp = self.coordinator.month_start_timestamp
-        
-        forecast_kwh = 0.0
-        current_month_kwh = kwh - kwh_at_month_start
-        
-        # Używamy timestampu ostatniego impulsu jako referencji czasu
-        now = self.coordinator.data.get("last_impulse_time", time.time())
-        now_dt = datetime.fromtimestamp(now)
-        
-        # Obliczenie upływających sekund od początku okresu
-        elapsed_seconds = now - month_start_timestamp
-        
-        # Wymagamy minimum 60 sekund i zużycia większego niż 0
-        if elapsed_seconds > 60 and current_month_kwh > 0 and now_dt.month == self.coordinator.last_month_checked:
-            elapsed_days = elapsed_seconds / (24 * 3600)
-            days_in_month = monthrange(now_dt.year, now_dt.month)[1]
-            
-            # W obliczeniach prognozy używamy już tylko dni
-            if elapsed_days > 0:
-                forecast_kwh = (current_month_kwh / elapsed_days) * days_in_month
-        
         self._attr_extra_state_attributes = {
-            "kwh_at_month_start": round(kwh_at_month_start, 3),
+            "kwh_at_month_start": round(self.coordinator.kwh_at_month_start, 3),
             "last_month_checked": self.coordinator.last_month_checked,
-            "month_start_timestamp": month_start_timestamp,
+            "month_start_timestamp": self.coordinator.month_start_timestamp,
         }
-        
+            
         return round(forecast_kwh, 3)
