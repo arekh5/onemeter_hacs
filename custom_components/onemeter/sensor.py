@@ -379,7 +379,7 @@ class OneMeterBaseSensor(SensorEntity):
             name="OneMeter",
             manufacturer="OneMeter",
             model="Energy Meter",
-            sw_version="2.0.58", # ✅ NOWY NUMER WERSJI
+            sw_version="2.0.59", # ✅ NOWY NUMER WERSJI
         )
 
     @property
@@ -388,9 +388,9 @@ class OneMeterBaseSensor(SensorEntity):
         return callable(self.coordinator.unsubscribe_mqtt)
 
     async def async_added_to_hass(self) -> None:
-        """Rejestracja callbacku po dodaniu encji. POPRAWKA NA RuntimeWarning."""
+        """Rejestracja callbacku po dodaniu encji."""
         
-        # 1. FIX: Tworzymy synchroniczny callback, który planuje asynchroniczną aktualizację (dla coordinator.py)
+        # 1. FIX: Tworzymy synchroniczny callback, który planuje asynchroniczną aktualizację
         @callback
         def update_from_coordinator():
             """Handle coordinator update."""
@@ -400,9 +400,8 @@ class OneMeterBaseSensor(SensorEntity):
             self.coordinator.async_add_listener(update_from_coordinator)
         )
         
-        # 2. ✅ FIX NA BŁĄD RuntimeWarning: Omijamy wywołanie metody bazowej Entity
-        # dla sensorów, które NIE odzyskują stanu (PowerSensor).
-        # Wywołujemy ją tylko dla RestoreEntity, gdzie jest potrzebna do przywrócenia stanu.
+        # 2. FIX: Wywołujemy super().async_added_to_hass() TYLKO dla encji RestoreEntity,
+        # co zapobiega RuntimeWarning w OneMeterPowerSensor.
         if isinstance(self, RestoreEntity):
              await super().async_added_to_hass()
 
@@ -422,13 +421,13 @@ class OneMeterEnergySensor(OneMeterBaseSensor, RestoreEntity):
         return None
 
 class OneMeterPowerSensor(OneMeterBaseSensor):
-    """Sensor mocy chwilowej (kW). Teraz poprawnie ogranicza zapis do bazy danych, a nie stan."""
+    """Sensor mocy chwilowej (kW). Teraz poprawnie ogranicza zapis do bazy danych."""
     _attr_native_unit_of_measurement = UnitOfPower.KILO_WATT
     _attr_device_class = SensorDeviceClass.POWER
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_translation_key = "power_kw"
     
-    # ✅ MECHANIZM THROTTLINGU
+    # MECHANIZM THROTTLINGU
     def __init__(self, coordinator: OneMeterCoordinator):
         super().__init__(coordinator)
         # Przechowujemy czas ostatniego ZAPISU stanu do bazy HA
@@ -453,17 +452,20 @@ class OneMeterPowerSensor(OneMeterBaseSensor):
         if time_since_impulse > self.coordinator.power_timeout_seconds:
              current_power = 0.0
         
-        # Zawsze zwracamy aktualną wartość (bez 'None'), aby na dashboardzie było widać poprawną moc.
         return round(current_power, 3)
 
-    async def async_write_ha_state(self) -> None:
-        """Nadpisuje metodę zapisu, aby poprawnie ograniczyć częstotliwość do bazy danych."""
+    # ✅ OSTATECZNY FIX NA RuntimeWarning: coroutine was never awaited
+    def async_write_ha_state(self) -> None:
+        """Nadpisuje metodę zapisu, aby poprawnie ograniczyć częstotliwość do bazy danych,
+        planując asynchroniczne wywołanie w pętli zdarzeń."""
         now = time.time()
         current_power = self.native_value
         
+        # Użycie self.hass.async_create_task jest kluczowe, aby poprawnie zaplanować
+        # asynchroniczną operację w synchronicznym kontekście (który jest czasem
+        # wywoływany przez Home Assistant).
         if current_power is None:
-            # Jeśli wartość jest None (np. Koordynator nie ma jeszcze danych), zapisujemy stan bazowy
-            await super().async_write_ha_state()
+            self.hass.async_create_task(super().async_write_ha_state())
             return
 
         # 1. Warunki do NATYCHMIASTOWEGO ZAPISU:
@@ -481,10 +483,8 @@ class OneMeterPowerSensor(OneMeterBaseSensor):
         if should_write:
             self._last_write_time = now
             self._last_recorded_power = current_power
-            # ✅ Zawsze używamy 'await'
-            await super().async_write_ha_state()
-        
-        # Jeśli nie piszemy do bazy, funkcja kończy się tutaj, zapobiegając nadpisaniu stanu w historii.
+            # Planowanie wywołania w pętli zdarzeń
+            self.hass.async_create_task(super().async_write_ha_state())
 
 
 class OneMeterForecastSensor(OneMeterBaseSensor, RestoreEntity):
@@ -502,7 +502,7 @@ class OneMeterForecastSensor(OneMeterBaseSensor, RestoreEntity):
         if last_state is not None:
              try:
                  restored_value = float(last_state.state)
-                 # Ustawienie stanu w Koordynatorze przed wywołaniem base class, które może odtworzyć stan
+                 # Ustawienie stanu w Koordynatorze przed wywołaniem base class
                  self.coordinator.set_forecast_state(last_state.attributes, restored_value)
 
              except (ValueError, TypeError):
