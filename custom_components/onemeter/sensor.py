@@ -4,7 +4,7 @@ import logging
 from datetime import datetime
 from collections import deque
 from calendar import monthrange 
-from datetime import timedelta # Importujemy timedelta
+from datetime import timedelta 
 
 from homeassistant.components.sensor import (
     SensorEntity,
@@ -379,7 +379,7 @@ class OneMeterBaseSensor(SensorEntity):
             name="OneMeter",
             manufacturer="OneMeter",
             model="Energy Meter",
-            sw_version="2.0.55", # ✅ NOWY NUMER WERSJI
+            sw_version="2.0.56", # ✅ NOWY NUMER WERSJI
         )
 
     @property
@@ -388,10 +388,21 @@ class OneMeterBaseSensor(SensorEntity):
         return callable(self.coordinator.unsubscribe_mqtt)
 
     async def async_added_to_hass(self) -> None:
-        """Rejestracja callbacku po dodaniu encji."""
+        """Rejestracja callbacku po dodaniu encji. POPRAWKA NA RuntimeWarning."""
+        
+        # ✅ FIX: Tworzymy synchroniczny callback, który planuje asynchroniczną aktualizację,
+        # co jest poprawnym wzorcem dla DataUpdateCoordinator.
+        @callback
+        def update_from_coordinator():
+            """Handle coordinator update."""
+            # To wywoła asynchroniczne 'async_write_ha_state' (w tym naszą wersję throttlującą)
+            self.async_schedule_update_ha_state(True) 
+
         self.async_on_remove(
-            self.coordinator.async_add_listener(self.async_write_ha_state)
+            self.coordinator.async_add_listener(update_from_coordinator)
         )
+        
+        # Ostatnia poprawna aktualizacja z klasy bazowej
         if not isinstance(self, RestoreEntity):
              await super().async_added_to_hass()
 
@@ -417,7 +428,7 @@ class OneMeterPowerSensor(OneMeterBaseSensor):
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_translation_key = "power_kw"
     
-    # ✅ MECHANIZM THROTTLINGU ZMIENIONY NA WŁAŚCIWY DLA HA
+    # ✅ MECHANIZM THROTTLINGU
     def __init__(self, coordinator: OneMeterCoordinator):
         super().__init__(coordinator)
         # Przechowujemy czas ostatniego ZAPISU stanu do bazy HA
@@ -470,7 +481,7 @@ class OneMeterPowerSensor(OneMeterBaseSensor):
         if should_write:
             self._last_write_time = now
             self._last_recorded_power = current_power
-            # ✅ Ważne: Zawsze używamy 'await'
+            # ✅ Zawsze używamy 'await'
             await super().async_write_ha_state()
         
         # Jeśli nie piszemy do bazy, funkcja kończy się tutaj, zapobiegając nadpisaniu stanu w historii.
@@ -496,10 +507,7 @@ class OneMeterForecastSensor(OneMeterBaseSensor, RestoreEntity):
              except (ValueError, TypeError):
                  _LOGGER.warning("Nie udało się odzyskać ostatniej wartości Prognozy lub jej atrybutów. Używam domyślnych/obecnych.")
                  
-        self.async_on_remove(
-            self.coordinator.async_add_listener(self.async_write_ha_state)
-        )
-        
+        # Korzystamy z poprawionej logiki z OneMeterBaseSensor
         await super(OneMeterBaseSensor, self).async_added_to_hass()
 
 
