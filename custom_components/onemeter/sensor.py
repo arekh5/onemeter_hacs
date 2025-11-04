@@ -16,7 +16,6 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.components import mqtt
-# Upewniamy się, że UnitOfPower jest poprawnie zaimportowane
 from homeassistant.const import UnitOfEnergy, UnitOfPower
 from homeassistant.helpers.typing import StateType
 
@@ -34,7 +33,7 @@ class OneMeterCoordinator(DataUpdateCoordinator):
         self.hass = hass
         self.entry = entry
         self.mqtt_config = entry.data
-        self.device_id = "om9613"
+        self.device_id = "om9613" # Stały ID urządzenia
         self.base_topic = "onemeter/s10/v1"
         
         # --- Stan MQTT ---
@@ -52,7 +51,7 @@ class OneMeterCoordinator(DataUpdateCoordinator):
         self.power_timeout_seconds = self.mqtt_config.get("power_timeout_seconds", 300)
         self.power_history = deque(maxlen=self.mqtt_config.get("power_average_window", 2))
         
-        # --- Zapisywany Stan Prognozy (przechowywany w encji Forecast) ---
+        # --- Zapisywany Stan Prognozy ---
         self.kwh_at_month_start = 0.0
         self.last_month_checked = datetime.now().month
         self.month_start_timestamp = time.time()
@@ -61,7 +60,7 @@ class OneMeterCoordinator(DataUpdateCoordinator):
             hass,
             _LOGGER,
             name=DOMAIN,
-            update_interval=None 
+            update_interval=None # Koordynator Event-Driven
         )
 
     @callback
@@ -74,11 +73,10 @@ class OneMeterCoordinator(DataUpdateCoordinator):
                 return
 
             now = time.time()
-            # Zakładamy, że każdy komunikat to jeden impuls (jak w oryginalnym scenariuszu)
             self.total_impulses += 1 
             self.last_impulse_times.append(now) 
 
-            # --- 1. Obliczenie Mocy ---
+            # --- 1. Obliczenie Mocy (Delta t) ---
             power_kw = 0.0
             if len(self.last_impulse_times) == 2:
                 time_diff_t = self.last_impulse_times[1] - self.last_impulse_times[0]
@@ -88,7 +86,6 @@ class OneMeterCoordinator(DataUpdateCoordinator):
                          power_kw = self.max_power_kw
                     self.last_valid_power = power_kw
             
-            # Dodanie do bufora
             self.power_history.append(self.last_valid_power)
             
             # --- 2. Obliczenie Energii ---
@@ -132,7 +129,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     """Tworzenie encji sensorów."""
     
     coordinator = OneMeterCoordinator(hass, entry)
-    await coordinator.async_config_entry_first_refresh()
+    # POPRAWKA BŁĘDU NotImplementedError: usunięto linijkę wymuszającą odświeżanie.
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
 
@@ -171,8 +168,8 @@ class OneMeterBaseSensor(RestoreEntity):
         
     @property
     def available(self) -> bool:
-        """Sprawdza, czy koordynator jest dostępny."""
-        return self.coordinator.last_update_success
+        """Sprawdza, czy koordynator jest dostępny (ma dane)."""
+        return self.coordinator.data is not None
 
 
 class OneMeterEnergySensor(OneMeterBaseSensor):
@@ -182,7 +179,6 @@ class OneMeterEnergySensor(OneMeterBaseSensor):
     _attr_name = "Energy"
     _attr_device_class = SensorDeviceClass.ENERGY
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
-    # Prawidłowa stała (UnitOfEnergy.KILO_WATT_HOUR)
     _attr_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR 
     
     def __init__(self, coordinator: OneMeterCoordinator):
@@ -202,7 +198,7 @@ class OneMeterPowerSensor(OneMeterBaseSensor):
     _attr_name = "Power"
     _attr_device_class = SensorDeviceClass.POWER
     _attr_state_class = SensorStateClass.MEASUREMENT
-    # POPRAWKA BŁĘDU: Zmieniono KILO_WATTS na KILO_WATT
+    # POPRAWKA BŁĘDU KILO_WATTS: Użyto prawidłowej stałej KILO_WATT
     _attr_unit_of_measurement = UnitOfPower.KILO_WATT 
     
     def __init__(self, coordinator: OneMeterCoordinator):
@@ -214,7 +210,6 @@ class OneMeterPowerSensor(OneMeterBaseSensor):
         """Zwraca uśrednioną moc chwilową kW."""
         now = time.time()
         
-        # LOGIKA ZEROWANIA MOCY
         last_impulse_time = self.coordinator.data.get("last_impulse_time", 0)
         power = self.coordinator.data.get("power_kw", 0.0)
 
@@ -240,7 +235,7 @@ class OneMeterForecastSensor(OneMeterBaseSensor):
         self._attr_extra_state_attributes = {}
 
     async def async_added_to_hass(self) -> None:
-        """Ładowanie stanu prognozy po starcie HA."""
+        """Ładowanie stanu prognozy po starcie HA (PERSYSTENCJA)."""
         await super().async_added_to_hass()
         
         last_state = await self.async_get_last_state()
@@ -286,7 +281,7 @@ class OneMeterForecastSensor(OneMeterBaseSensor):
             days_in_month = monthrange(now_dt.year, current_month)[1]
             forecast_kwh = (current_month_kwh / elapsed_days) * days_in_month
         
-        # Zapisanie stanu w atrybutach dla persystencji
+        # Zapisanie stanu prognozy w atrybutach, aby Home Assistant mógł go odzyskać
         self._attr_extra_state_attributes = {
             "kwh_at_month_start": round(self.coordinator.kwh_at_month_start, 3),
             "last_month_checked": self.coordinator.last_month_checked,

@@ -20,6 +20,7 @@ class OneMeterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             vol.Required("mqtt_port", default=1883): int,
             vol.Required("mqtt_user", default="mqtt"): str,
             vol.Required("mqtt_pass", default="mqtt"): str,
+            # Szybsze wartości domyślne dla v2.0.x
             vol.Optional("impulses_per_kwh", default=1000): int,
             vol.Optional("max_power_kw", default=20): int,
             vol.Optional("power_update_interval", default=5): int,
@@ -43,16 +44,19 @@ class OneMeterOptionsFlowHandler(config_entries.OptionsFlow):
     """Edycja ustawień integracji OneMeter."""
 
     def __init__(self, config_entry):
-        # USUNIĘTO: self.config_entry = config_entry
-        # Atrybut self.config_entry jest teraz przypisywany automatycznie.
+        # POPRAWKA DEPRECJACJI:
+        # Ręczne przypisanie self.config_entry zostało usunięte. 
+        # Zmienna jest teraz przypisywana automatycznie przez HA.
         pass
 
     async def async_step_init(self, user_input=None):
         if user_input is not None:
-            # Zapisuje nowe opcje do self.config_entry.options
+            # Zapisuje nowe opcje, łącząc je z istniejącą konfiguracją.
             return self.async_create_entry(title="", data=user_input)
 
-        # KLUCZOWA LOGIKA ZAPISYWANIA: Łączymy data i options, dając priorytet options
+        # KLUCZOWA LOGIKA (POPRAWKA BŁĘDU ZAPISU): 
+        # Łączymy self.config_entry.data i self.config_entry.options, 
+        # aby mieć pewność, że wszystkie ustawienia są wyświetlane i nadpisywane.
         current = {**self.config_entry.data, **self.config_entry.options}
 
         schema = vol.Schema({

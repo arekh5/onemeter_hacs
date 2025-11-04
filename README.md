@@ -1,69 +1,67 @@
-# OneMeter Energy (Niestandardowa Integracja HA) ⚡️
+# 🧭 OneMeter – Home Assistant Integration (v2.0.6)
 
-Integracja **OneMeter** umożliwia odczyt danych z urządzenia OneMeter bezpośrednio w Home Assistant. Została przygotowana z myślą o łatwej instalacji przez **HACS** (Home Assistant Community Store).
-
----
-
-## 🚀 Instalacja przez HACS
-
-1. Upewnij się, że masz zainstalowany [HACS](https://hacs.xyz/).
-2. W Home Assistant otwórz:
-   **HACS → Integrations → ... (trzy kropki w prawym górnym rogu) → Custom repositories**
-3. W okienku, które się otworzy:
-   - W polu **Repository** wpisz:
-     ```
-     [https://github.com/arekh5/onemeter-hacs](https://github.com/arekh5/onemeter-hacs)
-     ```
-   - Wybierz typ: `Integration`
-   - Kliknij **Add**
-4. Wyszukaj integrację **OneMeter** w HACS i zainstaluj ją.
-5. Po instalacji **uruchom ponownie Home Assistant.**
+Integracja **OneMeter** umożliwia odczyt danych z urządzenia OneMeter przez MQTT i prezentowanie ich w Home Assistant. Została przygotowana z myślą o łatwej instalacji przez **HACS** (Home Assistant Community Store).
 
 ---
 
-## ⚙️ Konfiguracja i Parametry
+## 🌟 Najważniejsze zmiany w v2.0.6 (Krytyczna Aktualizacja)
 
-Integracja wykorzystuje logikę opartą na **różnicy czasu ($t$) między impulsami** ($P = \frac{3600}{k \cdot t}$).
+Ta wersja wprowadza **fundamentalne ulepszenia stabilności i funkcjonalności**, zmieniając całkowicie architekturę integracji na nowoczesny standard Home Assistant (HA Entity + DataUpdateCoordinator):
 
-Dodaj integrację przez interfejs: **Ustawienia → Urządzenia i usługi → Dodaj integrację → OneMeter**.
+* **TRWAŁA PROGNOZA MIESIĘCZNA (KLUCZOWA ZMIANA):** Nowa encja `OneMeter Monthly Forecast` korzysta z **RestoreEntity**. Stan początkowy (zużycie na początku miesiąca) jest teraz **trwale zapisywany w bazie HA** i odzyskiwany po restarcie. **Prognoza nie resetuje się już do 0** po ponownym uruchomieniu Home Assistant.
+* **Architektura Asynchroniczna:** Pełna refaktoryzacja na **HA Entity** z Koordynatorem (Event-Driven), co zwiększa stabilność i zgodność z przyszłymi wersjami HA.
+* **Poprawki Stabilności:**
+    * Usunięto błąd przestarzałej składni `config_flow` (Deprecation fix).
+    * Usunięto błędy ładowania platformy (`ImportError`, `NotImplementedError`).
+* **Optymalizacja Szybkości:** Domyślne wartości przyspieszone: interwał aktualizacji sensora do **5s**, a okno uśredniania do **2** ostatnich odczytów.
 
-| Parametr | Typ pola | Domyślna wartość | Opis |
-| :--- | :--- | :--- | :--- |
-| **Broker MQTT** | Wymagane | `127.0.0.1` | Adres IP/host brokera MQTT. |
-| **Port MQTT** | Wymagane | `1883` | Port brokera MQTT. |
-| **MQTT User/Pass** | Wymagane | `mqtt` | Dane uwierzytelniające do brokera MQTT. |
-| **Impulses per kWh** | Opcjonalne | `1000` | Stała licznika ($k$ impulsów/kWh). |
-| **Max Power (kW)** | Opcjonalne | `20` | Maksymalna akceptowalna moc chwilowa (bezpiecznik). |
-| **Power Update Interval** | Opcjonalne | `15` | Jak często (w sekundach) stan sensora jest publikowany do HA. |
-| **Power Average Window** | Opcjonalne | `5` | Rozmiar bufora do **wygładzania** mocy chwilowej (liczba ostatnich odczytów). |
-| **Power Timeout Seconds** | Opcjonalne | `300` | Czas (w sekundach), po którym brak impulsu oznacza reset mocy do **0.0 kW** (logika "ostatniej znanej mocy"). |
+> ⚠️ **WAŻNE:** Ze względu na fundamentalną zmianę architektury (z Async Executor Job na HA Entity), po aktualizacji do wersji v2.0.x **WYMAGANE JEST USUNIĘCIE I PONOWNE DODANIE INTEGRACJI** w Home Assistant, aby uniknąć błędów ładowania!
 
 ---
 
-## 💡 Sensory Tworzone przez Integrację
+## 🚀 Instalacja przez HACS (Rekomendowana)
+
+1.  Upewnij się, że masz zainstalowany [HACS](https://hacs.xyz/).
+2.  W Home Assistant otwórz:
+    **HACS → Integrations → ... (trzy kropki w prawym górnym rogu) → Custom repositories**
+3.  W okienku, które się otworzy:
+    -   W polu **Repository** wpisz adres Twojego repozytorium (np. `https://github.com/arekh5/onemeter-hacs`)
+    -   Wybierz typ: `Integration`
+    -   Kliknij **Add**
+4.  Wyszukaj integrację **OneMeter** w HACS i zainstaluj ją.
+5.  Po instalacji **uruchom ponownie Home Assistant.**
+6.  Dodaj integrację przez interfejs: **Ustawienia → Urządzenia i usługi → Dodaj integrację → OneMeter**.
+
+---
+
+## ⚙️ Sensory Tworzone przez Integrację
 
 Integracja automatycznie utworzy następujące sensory:
 
-| Nazwa | Unit of Measurement | Klasa urządzenia | Opis |
-| :--- | :--- | :--- | :--- |
-| **OneMeter Power** | `kW` | `power` | Obliczona moc chwilowa (na podstawie $\Delta t$). |
-| **OneMeter Energy** | `kWh` | `energy` | Licznik całkowitego zużycia energii. |
-| **OneMeter Timestamp** | (Brak) | (Brak) | Ostatnia sygnatura czasowa odczytu. |
+| Nazwa | Unit of Measurement | Klasa urządzenia | State Class | Opis |
+| :--- | :--- | :--- | :--- | :--- |
+| **OneMeter Energy** | `kWh` | `energy` | `total_increasing` | Licznik całkowitego zużycia energii. |
+| **OneMeter Power** | `kW` | `power` | `measurement` | Obliczona i uśredniona moc chwilowa. |
+| **OneMeter Monthly Forecast** | `kWh` | `energy` | `measurement` | **Prognozowane** zużycie energii w bieżącym miesiącu. **Stan jest trwały!** |
+
+**Parametry Konfiguracyjne (Opcje)**
+
+Wszystkie parametry można edytować po instalacji: **Ustawienia → Urządzenia i usługi → OneMeter → Opcje**.
+
+| Opcja | Domyślna v2.0.6 | Opis |
+| :--- | :--- | :--- |
+| **Impulses per kWh** | `1000` | Stała KWh/impuls dla Twojego licznika. |
+| **Max Power (kW)** | `20` | Maksymalna akceptowalna moc chwilowa. |
+| **Power Update Interval (s)** | **`5`** | Interwał odświeżania encji mocy w HA. |
+| **Power Average Window** | **`2`** | Rozmiar bufora do wygładzania mocy (liczba ostatnich odczytów). |
+| **Power Timeout Seconds** | `300` | Czas (w sekundach), po którym brak impulsu oznacza reset mocy do **0.0 kW**. |
 
 ---
 
-## 🧰 Ręczna instalacja (alternatywnie)
-
-Jeśli nie używasz HACS, możesz dodać integrację ręcznie:
-
-1. Pobierz najnowszą wersję z sekcji [Releases](https://github.com/arekh5/onemeter-hacs/releases).
-2. Rozpakuj folder `custom_components/onemeter` do katalogu: /config/custom_components/onemeter
-3. Uruchom ponownie Home Assistant.
-4. Dodaj integrację z listy dostępnych.
+## 🧾 Struktura repozytorium (v2.0.6)
 
 ---
 
-## 🧾 Struktura repozytorium
 custom_components/onemeter/
  ├─ init.py
  ├─ manifest.json
