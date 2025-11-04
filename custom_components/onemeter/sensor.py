@@ -87,10 +87,16 @@ class OneMeterCoordinator(DataUpdateCoordinator):
     @callback
     async def _async_message_received(self, msg):
         """Asynchroniczna obsługa wiadomości MQTT."""
+        
+        # DODATKOWE LOGOWANIE (v2.0.13), aby potwierdzić wywołanie callbacku
+        _LOGGER.info(f"✅ CALLBACK WYWOŁANY. Temat: {msg.topic}, Payload: {len(msg.payload)} bytes")
+        
         try:
             payload = json.loads(msg.payload.decode("utf-8"))
             dev_list = payload.get("dev_list", [])
+            
             if not dev_list:
+                _LOGGER.warning("Odebrano wiadomość MQTT, ale brakuje klucza 'dev_list'. Ignorowanie.")
                 return
 
             now = time.time()
@@ -126,8 +132,7 @@ class OneMeterCoordinator(DataUpdateCoordinator):
             self.async_set_updated_data(self.data)
             _LOGGER.debug(f"📊 Zaktualizowano dane HA: kWh={round(kwh, 3)}, Power={round(avg_power_kw, 3)}kW")
 
-
-            # --- 4. KRYTYCZNA POPRAWKA (v2.0.13): Ponowna publikacja przetworzonych danych do MQTT ---
+            # --- 4. Ponowna publikacja przetworzonych danych do MQTT ---
             timestamp_dt = datetime.fromtimestamp(now)
             timestamp_str = timestamp_dt.strftime("%Y-%m-%d %H:%M:%S")
             
@@ -148,7 +153,6 @@ class OneMeterCoordinator(DataUpdateCoordinator):
                     qos=0, 
                     retain=False
                 )
-                # ZMIANA: Z DEBUG na INFO, aby było widoczne w standardowych logach
                 _LOGGER.info(f"📤 Opublikowano przetworzony stan na temacie: {state_topic}")
             except Exception as publish_e:
                  _LOGGER.error(f"❌ BŁĄD PUBLIKACJI: Nie udało się opublikować przetworzonego stanu na MQTT: {publish_e}")
@@ -161,6 +165,7 @@ class OneMeterCoordinator(DataUpdateCoordinator):
         
         # Czekanie na gotowość klienta MQTT
         await mqtt.async_when_ready(self.hass)
+        _LOGGER.debug("✅ Klient MQTT Home Assistanta gotowy do subskrypcji i publikacji.")
         
         # 1. SUBSKRYPCJA GŁÓWNEGO TEMATU
         self.unsubscribe_mqtt = await mqtt.async_subscribe(
@@ -214,21 +219,23 @@ class OneMeterCoordinator(DataUpdateCoordinator):
 # ----------------------------------------------------------------------
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities):
-    """Tworzenie encji sensorów z obsługą odzyskiwania stanu Koordynatora."""
+    """Tworzenie encji sensorów z obsługą odzyskiwania stanu Koordynatora (v2.0.14)."""
     
     coordinator = OneMeterCoordinator(hass, entry)
 
-    # 1. Tworzymy tymczasowy sensor, aby odzyskać jego ostatni stan kWh
-    # Używamy tej samej instancji Koordynatora, aby uniknąć problemów z dostępem.
-    temp_energy_sensor = OneMeterEnergySensor(coordinator)
-    last_state = await temp_energy_sensor.async_get_last_state()
+    # 1. POPRAWKA (v2.0.14): Odzyskujemy stan kWh BEZ tworzenia tymczasowej encji
+    entity_id_to_restore = f"sensor.{coordinator.device_id}_energy_kwh"
+    
+    # Pobieranie ostatniego znanego stanu bezpośrednio z serwisu stanów HA
+    last_state = hass.states.get(entity_id_to_restore)
     
     restored_kwh = 0.0
     if last_state and last_state.state:
         try:
             restored_kwh = float(last_state.state)
+            _LOGGER.info(f"✅ Odzyskano ostatni stan sensora {entity_id_to_restore}: {restored_kwh} kWh.")
         except ValueError:
-            _LOGGER.warning("Nie udało się odzyskać ostatniego stanu kWh.")
+            _LOGGER.warning(f"Nie udało się odzyskać stanu: Nieprawidłowa wartość '{last_state.state}'. Używam 0.0 kWh.")
 
     # 2. Inicjalizujemy Koordynatora odzyskanym stanem
     await coordinator._async_restore_state(restored_kwh)
@@ -236,7 +243,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     # 3. Dodajemy Koordynatora do HA
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
 
-    # 4. Dodajemy Encje (sensor energii jest już w pamięci z kroku 1, ale tworzymy nowe)
+    # 4. Dodajemy Encje (teraz już z zainicjalizowanymi danymi)
     async_add_entities([
         OneMeterEnergySensor(coordinator),
         OneMeterPowerSensor(coordinator),
@@ -269,7 +276,6 @@ class OneMeterBaseSensor(RestoreEntity):
     @property
     def available(self) -> bool:
         """Sprawdza, czy koordynator ma dane i aktualizacja była udana."""
-        # Dzięki _async_restore_state, ten warunek powinien być True na starcie
         return self.coordinator.data is not None and getattr(self.coordinator, 'last_update_success', False)
 
 
@@ -360,3 +366,29 @@ class OneMeterForecastSensor(OneMeterBaseSensor):
         
         kwh = self.coordinator.data.get("kwh", 0.0)
         forecast_kwh = 0.0
+        now_dt = datetime.now()
+        current_month = now_dt.month
+        
+        # 1. Sprawdzenie zmiany miesiąca (reset licznika na start miesiąca)
+        if current_month != self.coordinator.last_month_checked:
+            _LOGGER.info(f"🔄 Zmiana miesiąca wykryta. Reset prognozy.")
+            self.coordinator.kwh_at_month_start = kwh 
+            self.coordinator.last_month_checked = current_month
+            self.coordinator.month_start_timestamp = time.time() 
+        # Inicjalizacja stanu, jeśli HA wystartował po raz pierwszy w tym miesiącu
+        elif self.coordinator.kwh_at_month_start == 0.0 and kwh > 0:
+             self.coordinator.kwh_at_month_start = kwh
+             self.coordinator.month_start_timestamp = time.time()
+
+        # 2. Obliczenia prognozy
+        current_month_kwh = kwh - self.coordinator.kwh_at_month_start
+        elapsed_days = (time.time() - self.coordinator.month_start_timestamp) / (24 * 3600)
+        
+        if elapsed_days > 0.01 and current_month_kwh > 0:
+            days_in_month = monthrange(now_dt.year, current_month)[1]
+            forecast_kwh = (current_month_kwh / elapsed_days) * days_in_month
+        
+        # Zapisz stan do atrybutów dla persystencji
+        self._attr_extra_state_attributes = {
+            "kwh_at_month_start": round(self.coordinator.kwh_at_month_start, 3),
+            "last_month
