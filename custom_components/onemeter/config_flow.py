@@ -13,17 +13,13 @@ class OneMeterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors = {}
 
         if user_input is not None:
+            # Tworzy wpis konfiguracyjny z tylko potrzebnymi danymi
             return self.async_create_entry(title="OneMeter", data=user_input)
 
         schema = vol.Schema({
-            vol.Required("mqtt_broker", default="127.0.0.1"): str,
-            vol.Required("mqtt_port", default=1883): int,
-            vol.Required("mqtt_user", default="mqtt"): str,
-            vol.Required("mqtt_pass", default="mqtt"): str,
-            # Zmienione wartości domyślne dla v2.0.6
+            # Zbieramy tylko parametry licznika. Dane MQTT są pobierane z globalnego brokera HA.
             vol.Optional("impulses_per_kwh", default=1000): int,
             vol.Optional("max_power_kw", default=20): int,
-            vol.Optional("power_update_interval", default=5): int,
             vol.Optional("power_average_window", default=2): int,
             vol.Optional("power_timeout_seconds", default=300): int,
         })
@@ -41,28 +37,23 @@ class OneMeterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 class OneMeterOptionsFlowHandler(config_entries.OptionsFlow):
-    """Edycja ustawieĹ„ integracji OneMeter."""
+    """Edycja ustawień integracji OneMeter."""
 
     def __init__(self, config_entry):
-        # POPRAWKA DEPRECJACJI: Usunięto ręczne przypisanie config_entry
-        pass
+        self.config_entry = config_entry
 
     async def async_step_init(self, user_input=None):
         if user_input is not None:
             # Zapisuje nowe opcje
             return self.async_create_entry(title="", data=user_input)
 
-        # POPRAWKA BŁĘDU ZAPISU: Łączymy data i options
+        # Łączymy data i options
         current = {**self.config_entry.data, **self.config_entry.options}
 
         schema = vol.Schema({
-            vol.Required("mqtt_broker", default=current.get("mqtt_broker", "127.0.0.1")): str,
-            vol.Required("mqtt_port", default=current.get("mqtt_port", 1883)): int,
-            vol.Required("mqtt_user", default=current.get("mqtt_user", "mqtt")): str,
-            vol.Required("mqtt_pass", default=current.get("mqtt_pass", "mqtt")): str,
+            # Edytujemy tylko parametry licznika
             vol.Optional("impulses_per_kwh", default=current.get("impulses_per_kwh", 1000)): int,
             vol.Optional("max_power_kw", default=current.get("max_power_kw", 20)): int,
-            vol.Optional("power_update_interval", default=current.get("power_update_interval", 5)): int,
             vol.Optional("power_average_window", default=current.get("power_average_window", 2)): int,
             vol.Optional("power_timeout_seconds", default=current.get("power_timeout_seconds", 300)): int,
         })
