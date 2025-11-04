@@ -71,6 +71,11 @@ class OneMeterCoordinator(DataUpdateCoordinator):
             update_interval=None 
         )
 
+    # 💡 POPRAWKA BŁĘDU v2.0.37: Dodanie brakującej metody
+    def async_remove_listener(self, update_callback: callback) -> None:
+        """Usuwa słuchacza."""
+        self.async_remove_listener(update_callback)
+
     async def _async_update_data(self):
         """Metoda wymagana przez DataUpdateCoordinator, ale nieużywana (dane pochodzą z MQTT)."""
         return self.data
@@ -189,7 +194,6 @@ class OneMeterCoordinator(DataUpdateCoordinator):
         except json.JSONDecodeError as e:
             _LOGGER.error(f"❌ Błąd parsowania JSON wiadomości MQTT: {e}")
         except Exception as e:
-            # Właśnie tutaj wcześniej trafiał 'str' object has no attribute 'decode'
             _LOGGER.error(f"❌ Błąd krytyczny przetwarzania wiadomości MQTT: {e}")
 
     async def async_added_to_hass(self) -> None:
@@ -308,7 +312,7 @@ class OneMeterBaseSensor(SensorEntity):
             name="OneMeter",
             manufacturer="OneMeter",
             model="Energy Meter",
-            sw_version="2.0.36", # Zaktualizowany numer wersji
+            sw_version="2.0.37", # Zaktualizowany numer wersji
         )
 
     @property
@@ -361,10 +365,13 @@ class OneMeterPowerSensor(OneMeterBaseSensor):
 
 class OneMeterForecastSensor(OneMeterBaseSensor, RestoreEntity):
     """Sensor prognozy miesięcznego zużycia (kWh)."""
+    # 💡 POPRAWKA BŁĘDU v2.0.37: Zmieniamy klucz i ustawiamy nazwę (nadpisuje tłumaczenie)
+    _attr_translation_key = "monthly_forecast_kwh" 
+    _attr_name = "Prognoza miesięczna"
+    
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
     _attr_device_class = SensorDeviceClass.ENERGY
     _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_translation_key = "forecast_kwh"
 
     @property
     def native_value(self) -> StateType:
