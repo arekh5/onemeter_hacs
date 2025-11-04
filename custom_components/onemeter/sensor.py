@@ -69,6 +69,12 @@ class OneMeterCoordinator(DataUpdateCoordinator):
             update_interval=None 
         )
 
+    # 🚨 POPRAWKA: Pusta metoda wymagana przez DataUpdateCoordinator
+    async def _async_update_data(self):
+        """Metoda wymagana przez DataUpdateCoordinator, ale nieużywana (dane pochodzą z MQTT)."""
+        # Dane są aktualizowane asynchronicznie przez MQTT Callback.
+        return self.data
+    
     async def _async_restore_state(self, restored_kwh: float):
         """Ustawia stan początkowy Koordynatora na podstawie odzyskanego kWh z encji."""
         self.total_impulses = int(restored_kwh * self.impulses_per_kwh)
@@ -88,8 +94,7 @@ class OneMeterCoordinator(DataUpdateCoordinator):
     async def _async_message_received(self, msg):
         """Asynchroniczna obsługa wiadomości MQTT."""
         
-        # KRYTYCZNA WERYFIKACJA (v2.0.16): Wymuszenie logowania na poziomie ERROR
-        # To musi się pojawić, jeśli callback jest wywołany
+        # KRYTYCZNA WERYFIKACJA: Jeśli to się nie pojawi, subskrypcja nie działa!
         _LOGGER.error(f"🚨 CALLBACK OTRZYMANY. Temat: {msg.topic}, Długość Payload: {len(msg.payload)} bytes")
         
         try:
@@ -164,23 +169,31 @@ class OneMeterCoordinator(DataUpdateCoordinator):
     async def async_added_to_hass(self) -> None:
         """Subskrypcja MQTT i ustawienie statusu urządzenia (po gotowości klienta)."""
         
-        # Czekanie na gotowość klienta MQTT
-        await mqtt.async_when_ready(self.hass)
-        _LOGGER.debug("✅ Klient MQTT Home Assistanta gotowy do subskrypcji i publikacji.")
+        # AGRESYWNE LOGOWANIE STARTU
+        _LOGGER.error("🚨 ETAP 1/3: Rozpoczynanie procesu subskrypcji MQTT dla Koordynatora.")
         
-        # 1. SUBSKRYPCJA GŁÓWNEGO TEMATU
-        self.unsubscribe_mqtt = await mqtt.async_subscribe(
-            self.hass,
-            self.base_topic,
-            self._async_message_received,
-            qos=1,
-            encoding="utf-8"
-        )
-        _LOGGER.info(f"✅ Subskrypcja tematu {self.base_topic} aktywna.")
-        
-        # 2. PUBLIKACJA STATUSU
-        status_topic = f"onemeter/energy/{self.device_id}/status"
         try:
+            # Czekanie na gotowość klienta MQTT
+            await mqtt.async_when_ready(self.hass)
+            _LOGGER.error("🚨 ETAP 2/3: Klient MQTT Home Assistanta jest GOTOWY do subskrypcji.")
+
+            # 1. SUBSKRYPCJA GŁÓWNEGO TEMATU
+            self.unsubscribe_mqtt = await mqtt.async_subscribe(
+                self.hass,
+                self.base_topic,
+                self._async_message_received,
+                qos=1,
+                encoding="utf-8"
+            )
+            
+            # AGRESYWNE LOGOWANIE WERYFIKACYJNE
+            if callable(self.unsubscribe_mqtt):
+                _LOGGER.error(f"✅ ETAP 3/3: Subskrypcja tematu {self.base_topic} jest AKTYWNA. Funkcja callbacku działa.")
+            else:
+                 _LOGGER.error(f"❌ ETAP 3/3: Subskrypcja tematu {self.base_topic} NIEUDANA. Zwrócona wartość: {self.unsubscribe_mqtt}")
+
+            # 2. PUBLIKACJA STATUSU
+            status_topic = f"onemeter/energy/{self.device_id}/status"
             await mqtt.async_publish(
                 self.hass, 
                 status_topic, 
@@ -189,9 +202,10 @@ class OneMeterCoordinator(DataUpdateCoordinator):
                 retain=True
             )
             _LOGGER.info(f"✅ Opublikowano status 'online' na temacie: {status_topic}")
+
         except Exception as e:
-            _LOGGER.error(f"❌ Nie udało się opublikować statusu MQTT 'online': {e}")
-        
+            _LOGGER.error(f"🚨 BŁĄD KRYTYCZNY SUBKSKRYPCJI: Wystąpił błąd w async_added_to_hass: {e}")
+
         await super().async_added_to_hass()
         
     async def async_will_remove_from_hass(self) -> None:
@@ -220,12 +234,11 @@ class OneMeterCoordinator(DataUpdateCoordinator):
 # ----------------------------------------------------------------------
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities):
-    """Tworzenie encji sensorów z obsługą odzyskiwania stanu Koordynatora (v2.0.18)."""
+    """Tworzenie encji sensorów z obsługą odzyskiwania stanu Koordynatora (v2.0.19)."""
     
     coordinator = OneMeterCoordinator(hass, entry)
 
     # 1. Odzyskujemy stan kWh 
-    # ... (kod odzyskiwania stanu pozostaje bez zmian)
     entity_id_to_restore = f"sensor.{coordinator.device_id}_energy_kwh"
     last_state = hass.states.get(entity_id_to_restore)
     
@@ -240,30 +253,30 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     # 2. Inicjalizujemy Koordynatora odzyskanym stanem
     await coordinator._async_restore_state(restored_kwh)
     
-    # 3. DODANIE KRYTYCZNEJ LINII KODU (Wymuszenie uruchomienia subskrypcji MQTT)
-    # Ta linia gwarantuje, że async_added_to_hass Koordynatora zostanie wywołane,
-    # co rozpocznie subskrypcję i logowanie "🚨 ETAP 1/3".
-    await coordinator.async_config_entry_first_refresh() # <-- DODAJ TĘ LINIĘ
+    # 🚨 KRYTYCZNA AKTYWACJA: Wymuszenie uruchomienia subskrypcji MQTT i cyklu życia Koordynatora
+    await coordinator.async_config_entry_first_refresh()
     
-    # 4. Dodajemy Koordynatora do HA
+    # 3. Dodajemy Koordynatora do HA
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
 
-    # 5. Dodajemy Encje
+    # 4. Dodajemy Encje
     async_add_entities([
         OneMeterEnergySensor(coordinator),
         OneMeterPowerSensor(coordinator),
         OneMeterForecastSensor(coordinator),
     ])
     
-    # Musimy zwrócić True (dla prawidłowego forwardowania, które robi __init__.py)
+    # Zwrócenie True jest standardem dla forward_entry_setups
     return True
+
 
 # ----------------------------------------------------------------------
 # KLASY ENCJACH (SENSORÓW)
 # ----------------------------------------------------------------------
 
 class OneMeterBaseSensor(RestoreEntity):
-# ... (reszta klas sensorów bez zmian)
+    """Bazowa klasa sensora."""
+    
     def __init__(self, coordinator: OneMeterCoordinator):
         self.coordinator = coordinator
         self._attr_device_info = DeviceInfo(
@@ -292,7 +305,7 @@ class OneMeterEnergySensor(OneMeterBaseSensor):
     _attr_name = "Energy"
     _attr_device_class = SensorDeviceClass.ENERGY
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
-    _attr_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR 
     
     def __init__(self, coordinator: OneMeterCoordinator):
         super().__init__(coordinator)
@@ -311,7 +324,7 @@ class OneMeterPowerSensor(OneMeterBaseSensor):
     _attr_name = "Power"
     _attr_device_class = SensorDeviceClass.POWER
     _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_unit_of_measurement = UnitOfPower.KILO_WATT
+    _attr_unit_of_measurement = UnitOfPower.KILO_WATT 
     
     def __init__(self, coordinator: OneMeterCoordinator):
         super().__init__(coordinator)
@@ -378,7 +391,7 @@ class OneMeterForecastSensor(OneMeterBaseSensor):
         # 1. Sprawdzenie zmiany miesiąca (reset licznika na start miesiąca)
         if current_month != self.coordinator.last_month_checked:
             _LOGGER.info(f"🔄 Zmiana miesiąca wykryta. Reset prognozy.")
-            self.coordinator.kwh_at_month_start = kwh
+            self.coordinator.kwh_at_month_start = kwh 
             self.coordinator.last_month_checked = current_month
             self.coordinator.month_start_timestamp = time.time() 
         # Inicjalizacja stanu, jeśli HA wystartował po raz pierwszy w tym miesiącu
