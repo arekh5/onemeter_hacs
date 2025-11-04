@@ -4,7 +4,7 @@ import logging
 from datetime import datetime
 from collections import deque
 from calendar import monthrange 
-from datetime import timedelta 
+from datetime import timedelta # Importujemy timedelta
 
 from homeassistant.components.sensor import (
     SensorEntity,
@@ -379,7 +379,7 @@ class OneMeterBaseSensor(SensorEntity):
             name="OneMeter",
             manufacturer="OneMeter",
             model="Energy Meter",
-            sw_version="2.0.54", # ✅ NOWY NUMER WERSJI
+            sw_version="2.0.55", # ✅ NOWY NUMER WERSJI
         )
 
     @property
@@ -417,13 +417,15 @@ class OneMeterPowerSensor(OneMeterBaseSensor):
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_translation_key = "power_kw"
     
-    # ✅ NOWA LOGIKA THROTTLINGU (przeniesiona do async_write_ha_state)
+    # ✅ MECHANIZM THROTTLINGU ZMIENIONY NA WŁAŚCIWY DLA HA
     def __init__(self, coordinator: OneMeterCoordinator):
         super().__init__(coordinator)
         # Przechowujemy czas ostatniego ZAPISU stanu do bazy HA
         self._last_write_time = 0.0
         # Maksymalna częstotliwość zapisywania stanu do bazy to co 5 sekund
         self._throttle_interval = 5.0 
+        # Przechowujemy ostatnią ZAPISANĄ wartość (dla wykrycia istotnych skoków)
+        self._last_recorded_power = -1.0 
 
     @property
     def native_value(self) -> StateType:
@@ -444,27 +446,34 @@ class OneMeterPowerSensor(OneMeterBaseSensor):
         return round(current_power, 3)
 
     async def async_write_ha_state(self) -> None:
-        """Nadpisuje metodę zapisu, aby ograniczyć częstotliwość do bazy danych."""
+        """Nadpisuje metodę zapisu, aby poprawnie ograniczyć częstotliwość do bazy danych."""
         now = time.time()
-        
-        # 1. Sprawdzamy, czy upłynął minimalny czas od ostatniego zapisu
-        if now - self._last_write_time >= self._throttle_interval:
-            self._last_write_time = now
-            # Wywołujemy oryginalną metodę zapisu (zapis do historii i aktualizacja stanu)
-            await super().async_write_ha_state()
-            return
-        
-        # 2. Logika natychmiastowego zapisu dla 0.0 kW (jeśli jest istotna zmiana)
-        # Zapisujemy natychmiast, jeśli moc jest 0.0 (np. wyłączono licznik / timeout)
         current_power = self.native_value
-        if current_power is not None and current_power == 0.0:
-            self._last_write_time = now
+        
+        if current_power is None:
+            # Jeśli wartość jest None (np. Koordynator nie ma jeszcze danych), zapisujemy stan bazowy
             await super().async_write_ha_state()
             return
 
-        # 3. W przeciwnym razie: Ograniczamy zapis (pass)
-        # Wartość będzie widoczna na dashboardzie, ale nie zostanie zapisana do historii HA/bazy danych.
-        pass
+        # 1. Warunki do NATYCHMIASTOWEGO ZAPISU:
+        time_elapsed = now - self._last_write_time
+        is_significant_change = abs(current_power - self._last_recorded_power) > 0.5 # Skok o 0.5 kW
+        is_timeout_change = current_power == 0.0 and self._last_recorded_power > 0.0 # Przejście na 0.0 kW
+        
+        should_write = (
+            time_elapsed >= self._throttle_interval or 
+            is_timeout_change or 
+            is_significant_change
+        )
+        
+        # 2. Logika zapisu
+        if should_write:
+            self._last_write_time = now
+            self._last_recorded_power = current_power
+            # ✅ Ważne: Zawsze używamy 'await'
+            await super().async_write_ha_state()
+        
+        # Jeśli nie piszemy do bazy, funkcja kończy się tutaj, zapobiegając nadpisaniu stanu w historii.
 
 
 class OneMeterForecastSensor(OneMeterBaseSensor, RestoreEntity):
