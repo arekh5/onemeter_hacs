@@ -391,7 +391,6 @@ class OneMeterBaseSensor(SensorEntity):
         """Rejestracja callbacku po dodaniu encji. POPRAWKA NA RuntimeWarning."""
         
         # ✅ FIX: Tworzymy synchroniczny callback, który planuje asynchroniczną aktualizację,
-        # co jest poprawnym wzorcem dla DataUpdateCoordinator.
         @callback
         def update_from_coordinator():
             """Handle coordinator update."""
@@ -402,7 +401,6 @@ class OneMeterBaseSensor(SensorEntity):
             self.coordinator.async_add_listener(update_from_coordinator)
         )
         
-        # Ostatnia poprawna aktualizacja z klasy bazowej
         if not isinstance(self, RestoreEntity):
              await super().async_added_to_hass()
 
@@ -494,6 +492,7 @@ class OneMeterForecastSensor(OneMeterBaseSensor, RestoreEntity):
     
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
     
+    # ✅ POPRAWKA: Usunięcie zbędnej i błędnej rejestracji listenera
     async def async_added_to_hass(self) -> None:
         """Wywołane, gdy encja jest dodawana do Home Assistant."""
         
@@ -507,7 +506,9 @@ class OneMeterForecastSensor(OneMeterBaseSensor, RestoreEntity):
              except (ValueError, TypeError):
                  _LOGGER.warning("Nie udało się odzyskać ostatniej wartości Prognozy lub jej atrybutów. Używam domyślnych/obecnych.")
                  
-        # Korzystamy z poprawionej logiki z OneMeterBaseSensor
+        # Używamy asynchronicznej metody z klasy bazowej, która zawiera już poprawny listener.
+        # Musimy wywołać super() z argumentem dla RestoreEntity, aby nie rejestrować listenera
+        # dwukrotnie, ale zachować całą logikę added_to_hass.
         await super(OneMeterBaseSensor, self).async_added_to_hass()
 
 
