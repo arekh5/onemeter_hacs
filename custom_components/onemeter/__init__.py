@@ -1,21 +1,24 @@
 import logging
-from .sensor import OneMeterSensor
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant
 
 _LOGGER = logging.getLogger(__name__)
 
-async def async_setup_entry(hass, entry):
-    """Inicjalizacja integracji OneMeter"""
-    _LOGGER.info("🔌 Uruchamianie OneMeter Sensor")
+DOMAIN = "onemeter"
+PLATFORMS = ["sensor"]
+
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Inicjalizacja integracji OneMeter."""
     
-    sensor = OneMeterSensor(hass, entry)
-    await hass.async_add_executor_job(sensor.start)
+    # Dodanie platformy sensorów
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     
-    hass.data.setdefault("onemeter", {})[entry.entry_id] = sensor
     return True
 
-async def async_unload_entry(hass, entry):
-    """Usunięcie integracji"""
-    sensor = hass.data.get("onemeter", {}).pop(entry.entry_id, None)
-    if sensor:
-        sensor.stop()
-    return True
+async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Usunięcie integracji."""
+    
+    # Rozładowanie platformy sensorów
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    
+    return unload_ok
