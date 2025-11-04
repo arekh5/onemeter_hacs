@@ -1,16 +1,16 @@
-# 🧭 OneMeter – Home Assistant Integration (v2.0.8)
+# 🧭 OneMeter – Home Assistant Integration (v2.0.9)
 
 Integracja **OneMeter** umożliwia odczyt danych z urządzenia OneMeter przez MQTT i prezentowanie ich w Home Assistant. Została przygotowana z myślą o łatwej instalacji przez **HACS** (Home Assistant Community Store).
 
 ---
 
-## 🌟 Najważniejsze zmiany w v2.0.8 (Poprawka Dostępności MQTT)
+## 🌟 Najważniejsze zmiany w v2.0.9 (Poprawki Krytyczne)
 
-Ta wersja wprowadza poprawkę logiczną, przywracającą funkcjonalność MQTT obecną w starych wersjach:
+Ta wersja wprowadza **krytyczne poprawki** dotyczące zarządzania cyklem życia encji i koordynatora:
 
-* **Przywrócenie Statusu MQTT:** Dodano publikację wiadomości **"online"** na temacie `onemeter/energy/{device_id}/status` przy starcie integracji oraz **"offline"** przy jej usuwaniu. Zapewnia to monitorowanie dostępności urządzenia w MQTT Explorer i przez inne systemy.
-* **Poprawka Walidacji Prognozy:** Usunięto konflikt `device_class: energy` z `state_class: measurement` dla sensora prognozy miesięcznej (wprowadzony w v2.0.7).
-* **Trwała Prognoza Miesięczna:** Encja `OneMeter Monthly Forecast` **nie resetuje się do 0 po restarcie** (zmiana wprowadzona w v2.0.6).
+* **Naprawiono Błąd Usuwania Encji:** Usunięto błąd `AttributeError: 'OneMeterCoordinator' object has no attribute 'async_remove_listener'`, który pojawiał się podczas usuwania integracji lub restartu HA. Słuchacze encji są teraz poprawnie obsługiwani przez klasę bazową `DataUpdateCoordinator`.
+* **Wzmocnienie Publikacji Statusu MQTT:** Ponowna weryfikacja i upewnienie się, że status `online`/`offline` jest publikowany w odpowiednim momencie za pomocą asynchronicznych funkcji HA MQTT.
+* **Trwała Prognoza Miesięczna:** Encja `OneMeter Monthly Forecast` **nie resetuje się do 0 po restarcie**.
 
 > ⚠️ **WAŻNE:** Ze względu na fundamentalną zmianę architektury, po aktualizacji do wersji v2.0.x **WYMAGANE JEST USUNIĘCIE I PONOWNE DODANIE INTEGRACJI** w Home Assistant, aby uniknąć błędów ładowania!
 
@@ -45,7 +45,7 @@ Integracja automatycznie utworzy następujące sensory:
 
 Wszystkie parametry można edytować po instalacji: **Ustawienia → Urządzenia i usługi → OneMeter → Opcje**.
 
-| Opcja | Domyślna v2.0.8 | Opis |
+| Opcja | Domyślna v2.0.9 | Opis |
 | :--- | :--- | :--- |
 | **Impulses per kWh** | `1000` | Stała KWh/impuls dla Twojego licznika. |
 | **Max Power (kW)** | `20` | Maksymalna akceptowalna moc chwilowa. |
@@ -55,7 +55,7 @@ Wszystkie parametry można edytować po instalacji: **Ustawienia → Urządzenia
 
 ---
 
-## 🧾 Struktura repozytorium (v2.0.8)
+## 🧾 Struktura repozytorium (v2.0.9)
 
 custom_components/onemeter/
  ├─ init.py

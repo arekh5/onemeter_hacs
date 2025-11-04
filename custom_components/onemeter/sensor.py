@@ -32,7 +32,10 @@ class OneMeterCoordinator(DataUpdateCoordinator):
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry):
         self.hass = hass
         self.entry = entry
-        self.mqtt_config = entry.data
+        
+        # Łączymy data i options, aby pobrać aktualne ustawienia
+        config = {**entry.data, **entry.options}
+        
         self.device_id = "om9613"
         self.base_topic = "onemeter/s10/v1"
         
@@ -41,17 +44,17 @@ class OneMeterCoordinator(DataUpdateCoordinator):
 
         # --- Stan Licznika ---
         self.total_impulses = 0
-        self.last_impulse_times = deque(maxlen=2)
+        self.last_impulse_times = deque(maxlen=2) 
         self.last_valid_power = 0.0
         
         # --- Parametry ---
-        self.impulses_per_kwh = self.mqtt_config.get("impulses_per_kwh", 1000)
-        self.max_power_kw = self.mqtt_config.get("max_power_kw", 20.0)
-        self.power_update_interval = self.mqtt_config.get("power_update_interval", 5) 
-        self.power_timeout_seconds = self.mqtt_config.get("power_timeout_seconds", 300)
-        self.power_history = deque(maxlen=self.mqtt_config.get("power_average_window", 2))
+        self.impulses_per_kwh = config.get("impulses_per_kwh", 1000)
+        self.max_power_kw = config.get("max_power_kw", 20.0)
+        self.power_update_interval = config.get("power_update_interval", 5) 
+        self.power_timeout_seconds = config.get("power_timeout_seconds", 300)
+        self.power_history = deque(maxlen=config.get("power_average_window", 2))
         
-        # --- Zapisywany Stan Prognozy ---
+        # --- Zapisywany Stan Prognozy (Persystencja) ---
         self.kwh_at_month_start = 0.0
         self.last_month_checked = datetime.now().month
         self.month_start_timestamp = time.time()
@@ -60,7 +63,7 @@ class OneMeterCoordinator(DataUpdateCoordinator):
             hass,
             _LOGGER,
             name=DOMAIN,
-            update_interval=None # Koordynator Event-Driven
+            update_interval=None 
         )
 
     @callback
@@ -115,7 +118,7 @@ class OneMeterCoordinator(DataUpdateCoordinator):
             encoding="utf-8"
         )
         
-        # 2. PUBLIKACJA STATUSU (POPRAWKA: Dodano brakującą publikację statusu)
+        # 2. PUBLIKACJA STATUSU (v2.0.9: Weryfikacja publikacji statusu)
         status_topic = f"onemeter/energy/{self.device_id}/status"
         await mqtt.async_publish(
             self.hass, 
@@ -124,7 +127,7 @@ class OneMeterCoordinator(DataUpdateCoordinator):
             qos=1, 
             retain=True
         )
-        _LOGGER.info(f"✅ Opublikowano status 'online' na temacie: {status_topic}")
+        _LOGGER.debug(f"✅ Opublikowano status 'online' na temacie: {status_topic}")
         
         await super().async_added_to_hass()
         
@@ -132,13 +135,15 @@ class OneMeterCoordinator(DataUpdateCoordinator):
         """Usunięcie subskrypcji MQTT i publikacja statusu 'offline'."""
         
         # Publikacja statusu 'offline' przed usunięciem
+        status_topic = f"onemeter/energy/{self.device_id}/status"
         await mqtt.async_publish(
             self.hass, 
-            f"onemeter/energy/{self.device_id}/status", 
+            status_topic, 
             "offline", 
             qos=1, 
             retain=True
         )
+        _LOGGER.debug(f"🚪 Opublikowano status 'offline' na temacie: {status_topic}")
         
         if self.unsubscribe_mqtt:
             self.unsubscribe_mqtt()
@@ -153,6 +158,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     """Tworzenie encji sensorów."""
     
     coordinator = OneMeterCoordinator(hass, entry)
+
+    # Wymagane, aby Koordynator rozpoczął subskrypcję MQTT i inne operacje startowe
+    # oraz aby jego stan był gotowy przed tworzeniem encji.
+    await coordinator.async_config_entry_first_refresh() 
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
 
@@ -181,18 +190,19 @@ class OneMeterBaseSensor(RestoreEntity):
         self._attr_should_poll = False
         
     async def async_added_to_hass(self) -> None:
-        """Ładowanie stanu po dodaniu do HA."""
+        """Ładowanie stanu i rejestracja słuchacza."""
         await super().async_added_to_hass()
+        # Rejestracja słuchacza w Koordynatorze
         self.coordinator.async_add_listener(self.async_write_ha_state)
         
-    async def async_will_remove_from_hass(self) -> None:
-        """Usunięcie nasłuchiwania."""
-        self.coordinator.async_remove_listener(self.async_write_ha_state)
-        
+    # POPRAWKA BŁĘDU (v2.0.9): Usunięto async_will_remove_from_hass z encji,
+    # aby uniknąć kolizji z wbudowaną obsługą słuchaczy DataUpdateCoordinator.
+    # Usunięcie słuchacza jest teraz obsługiwane przez DataUpdateCoordinator.
+
     @property
     def available(self) -> bool:
         """Sprawdza, czy koordynator jest dostępny (ma dane)."""
-        return self.coordinator.data is not None
+        return self.coordinator.data is not None and self.coordinator.last_update_success
 
 
 class OneMeterEnergySensor(OneMeterBaseSensor):
@@ -235,6 +245,7 @@ class OneMeterPowerSensor(OneMeterBaseSensor):
         last_impulse_time = self.coordinator.data.get("last_impulse_time", 0)
         power = self.coordinator.data.get("power_kw", 0.0)
 
+        # Logika timeout'u zerująca moc
         if (now - last_impulse_time) > self.coordinator.power_timeout_seconds:
             return 0.0
         
@@ -246,6 +257,7 @@ class OneMeterForecastSensor(OneMeterBaseSensor):
 
     _attr_has_entity_name = True
     _attr_name = "Monthly Forecast"
+    # POPRAWKA WALIDACJI HA (v2.0.7): Usunięto SensorDeviceClass.ENERGY
     _attr_device_class = None
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
@@ -258,10 +270,12 @@ class OneMeterForecastSensor(OneMeterBaseSensor):
 
     async def async_added_to_hass(self) -> None:
         """Ładowanie stanu prognozy po starcie HA (PERSYSTENCJA)."""
-        await super().async_added_to_hass()
+        # Trzeba wywołać async_added_to_hass z klasy bazowej, która dodaje listenera
+        await super().async_added_to_hass() 
         
         last_state = await self.async_get_last_state()
         
+        # Odtwarzanie stanu z bazy danych HA
         if last_state and last_state.attributes:
             kwh_start = last_state.attributes.get('kwh_at_month_start')
             last_month = last_state.attributes.get('last_month_checked')
@@ -274,7 +288,8 @@ class OneMeterForecastSensor(OneMeterBaseSensor):
                 except ValueError:
                     _LOGGER.warning("Nieprawidłowe wartości w zapisanym stanie prognozy.")
         
-        self.coordinator.async_add_listener(self.async_write_ha_state)
+        # Słuchacz już dodany w OneMeterBaseSensor.async_added_to_hass
+        
 
     @property
     def native_value(self) -> StateType:
@@ -285,12 +300,13 @@ class OneMeterForecastSensor(OneMeterBaseSensor):
         now_dt = datetime.now()
         current_month = now_dt.month
         
-        # 1. Sprawdzenie zmiany miesiąca
+        # 1. Sprawdzenie zmiany miesiąca (reset licznika na start miesiąca)
         if current_month != self.coordinator.last_month_checked:
             _LOGGER.info(f"🔄 Zmiana miesiąca wykryta. Reset prognozy.")
             self.coordinator.kwh_at_month_start = kwh 
             self.coordinator.last_month_checked = current_month
             self.coordinator.month_start_timestamp = time.time() 
+        # Inicjalizacja stanu, jeśli HA wystartował po raz pierwszy w tym miesiącu
         elif self.coordinator.kwh_at_month_start == 0.0 and kwh > 0:
              self.coordinator.kwh_at_month_start = kwh
              self.coordinator.month_start_timestamp = time.time()
@@ -303,6 +319,7 @@ class OneMeterForecastSensor(OneMeterBaseSensor):
             days_in_month = monthrange(now_dt.year, current_month)[1]
             forecast_kwh = (current_month_kwh / elapsed_days) * days_in_month
         
+        # Zapisz stan do atrybutów dla persystencji
         self._attr_extra_state_attributes = {
             "kwh_at_month_start": round(self.coordinator.kwh_at_month_start, 3),
             "last_month_checked": self.coordinator.last_month_checked,
